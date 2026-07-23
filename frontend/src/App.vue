@@ -93,8 +93,9 @@
             <label>
               Provider
               <select v-model="keyForm.provider" :disabled="configLoading" @change="applyProviderDefaults">
-                <option value="ollama">Ollama</option>
-                <option value="openai">OpenAI</option>
+                <option v-for="provider in providers" :key="provider.name" :value="provider.name">
+                  {{ provider.displayName }}
+                </option>
               </select>
             </label>
             <label>
@@ -176,6 +177,7 @@ import { computed, nextTick, onMounted, ref, watch } from 'vue'
 const users = ref([])
 const selectedUserId = ref(null)
 const keys = ref([])
+const providers = ref([])
 const showManager = ref(true)
 const showKeyForm = ref(false)
 const editingKeyId = ref(null)
@@ -208,16 +210,32 @@ watch(selectedUserId, async (userId, previousUserId) => {
 watch(messages, scrollToBottom, { deep: true })
 watch(loading, value => { if (!value) inputRef.value?.focus() })
 
-onMounted(loadUsers)
+onMounted(async () => {
+  await loadProviders()
+  await loadUsers()
+})
 
-function newKeyForm() {
+function newKeyForm(providerName) {
+  const fallback = providers.value[0] || { name: 'ollama', defaultBaseUrl: 'http://localhost:11434', defaultModel: 'qwen2.5:7b' }
+  const target = providerName
+    ? providers.value.find(item => item.name === providerName) || fallback
+    : fallback
   return {
     name: '',
-    provider: 'ollama',
+    provider: target.name || 'ollama',
     apiKey: '',
-    baseUrl: 'http://localhost:11434',
-    modelName: 'qwen2.5:7b',
+    baseUrl: target.defaultBaseUrl || 'http://localhost:11434',
+    modelName: target.defaultModel || 'qwen2.5:7b',
     enabled: true
+  }
+}
+
+async function loadProviders() {
+  try {
+    providers.value = await api('/api/providers')
+  } catch (e) {
+    providers.value = []
+    configError.value = '加载 Provider 池失败：' + (e.message || String(e))
   }
 }
 
@@ -320,8 +338,8 @@ function startCreateKey() {
 function startEditKey(key) {
   editingKeyId.value = key.id
   keyForm.value = {
-    name: key.name,
-    provider: key.provider,
+    name: key.name || '',
+    provider: key.provider || providers.value[0]?.name || 'ollama',
     apiKey: '',
     baseUrl: key.baseUrl,
     modelName: key.modelName,
@@ -337,13 +355,12 @@ function cancelKeyForm() {
 }
 
 function applyProviderDefaults() {
-  if (keyForm.value.provider === 'openai') {
-    keyForm.value.baseUrl = 'https://api.openai.com'
-    keyForm.value.modelName = 'gpt-4o-mini'
-  } else {
-    keyForm.value.baseUrl = 'http://localhost:11434'
-    keyForm.value.modelName = 'qwen2.5:7b'
-  }
+  const providerName = (keyForm.value.provider || '').toString()
+  if (!providerName) return
+  const target = providers.value.find(item => item.name === providerName)
+  if (!target) return
+  keyForm.value.baseUrl = target.defaultBaseUrl
+  keyForm.value.modelName = target.defaultModel
 }
 
 async function saveKey() {

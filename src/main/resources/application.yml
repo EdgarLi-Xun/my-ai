@@ -4,7 +4,7 @@ spring:
 
   # H2 嵌入式数据库配置（文件模式，数据保存在 ./data/myai.mv.db）
   datasource:
-    url: jdbc:h2:file:./data/myai;DB_CLOSE_DELAY=-1;DB_CLOSE_ON_EXIT=FALSE;MODE=MySQL;NON_KEYWORDS=USER
+    jdbc-url: jdbc:h2:file:./data/myai;DB_CLOSE_DELAY=-1;DB_CLOSE_ON_EXIT=FALSE;MODE=MySQL;NON_KEYWORDS=USER
     username: sa
     password:
     driver-class-name: org.h2.Driver
@@ -21,8 +21,49 @@ spring:
       settings:
         web-allow-others: false
 
+# AI 厂家池：在 application.yml 维护，键名即 provider。
+# 新增厂家只需要在这里加一段，不需要改 Java。
+my-ai:
+  providers:
+    openai:
+      display-name: OpenAI
+      protocol: OPENAI_COMPATIBLE
+      default-base-url: https://api.openai.com
+      default-model: gpt-4o-mini
+      requires-key: true
+    deepseek:
+      display-name: DeepSeek
+      protocol: OPENAI_COMPATIBLE
+      default-base-url: https://api.deepseek.com
+      default-model: deepseek-chat
+      requires-key: true
+    moonshot:
+      display-name: Moonshot (Kimi)
+      protocol: OPENAI_COMPATIBLE
+      default-base-url: https://api.moonshot.cn
+      default-model: moonshot-v1-8k
+      requires-key: true
+    zhipu:
+      display-name: 智谱
+      protocol: OPENAI_COMPATIBLE
+      default-base-url: https://open.bigmodel.cn
+      default-model: glm-4-flash
+      requires-key: true
+    minimax:
+      display-name: MiniMax
+      protocol: OPENAI_COMPATIBLE
+      default-base-url: https://api.minimax.chat
+      default-model: MiniMax-Text-01
+      requires-key: true
+    ollama:
+      display-name: Ollama (本地)
+      protocol: OLLAMA
+      default-base-url: http://localhost:11434
+      default-model: qwen2.5:7b
+      requires-key: false
+
 server:
-  port: 8080
+  port: 8031
 
 logging:
   level:

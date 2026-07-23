@@ -1,6 +1,7 @@
 package cn.edgarli.service;
 
-import cn.edgarli.ai.AiProvider;
+import cn.edgarli.ai.provider.ProviderCatalog;
+import cn.edgarli.ai.provider.ProviderSpec;
 import cn.edgarli.common.BizException;
 import cn.edgarli.entity.User;
 import cn.edgarli.entity.UserApiKey;
@@ -14,7 +15,6 @@ import org.springframework.transaction.annotation.Transactional;
 import java.net.URI;
 import java.time.LocalDateTime;
 import java.util.List;
-import java.util.Locale;
 
 /**
  * 用户 API Key 配置服务。
@@ -24,10 +24,12 @@ public class UserApiKeyService {
 
     private final UserMapper userMapper;
     private final UserApiKeyMapper keyMapper;
+    private final ProviderCatalog catalog;
 
-    public UserApiKeyService(UserMapper userMapper, UserApiKeyMapper keyMapper) {
+    public UserApiKeyService(UserMapper userMapper, UserApiKeyMapper keyMapper, ProviderCatalog catalog) {
         this.userMapper = userMapper;
         this.keyMapper = keyMapper;
+        this.catalog = catalog;
     }
 
     public List<UserApiKeyResponse> list(Long userId) {
@@ -137,9 +139,16 @@ public class UserApiKeyService {
             throw BizException.badRequest("请求体不能为空");
         }
         key.setName(required(request.getName(), "Key 名称不能为空"));
-        key.setProvider(normalizeProvider(request.getProvider()));
-        key.setBaseUrl(validateUrl(request.getBaseUrl()));
-        key.setModelName(required(request.getModelName(), "模型名称不能为空"));
+
+        ProviderSpec spec = catalog.require(request.getProvider());
+        key.setProvider(spec.name());
+
+        String requestBaseUrl = trimToNull(request.getBaseUrl());
+        key.setBaseUrl(requestBaseUrl == null ? spec.defaultBaseUrl() : validateUrl(requestBaseUrl));
+
+        String requestModel = trimToNull(request.getModelName());
+        key.setModelName(requestModel == null ? spec.defaultModel() : requestModel);
+
         key.setEnabled(request.getEnabled() == null
                 ? creating || Boolean.TRUE.equals(key.getEnabled())
                 : request.getEnabled());
@@ -153,22 +162,13 @@ public class UserApiKeyService {
     }
 
     private void validateConfiguration(UserApiKey key) {
-        String provider = normalizeProvider(key.getProvider());
-        if (Boolean.TRUE.equals(key.getEnabled())
-                && provider.equals(AiProvider.OPENAI.name().toLowerCase(Locale.ROOT))
-                && trimToNull(key.getApiKey()) == null) {
-            throw BizException.badRequest("启用 OpenAI 配置时必须填写 API Key");
+        if (!Boolean.TRUE.equals(key.getEnabled())) {
+            return;
         }
-    }
-
-    private static String normalizeProvider(String provider) {
-        String value = required(provider, "provider 不能为空").toLowerCase(Locale.ROOT);
-        try {
-            AiProvider.valueOf(value.toUpperCase(Locale.ROOT));
-        } catch (IllegalArgumentException ex) {
-            throw BizException.badRequest("provider 仅支持 openai 或 ollama");
+        ProviderSpec spec = catalog.require(key.getProvider());
+        if (spec.requiresKey() && trimToNull(key.getApiKey()) == null) {
+            throw BizException.badRequest("启用 " + spec.displayName() + " 配置时必须填写 API Key");
         }
-        return value;
     }
 
     private static String validateUrl(String baseUrl) {
