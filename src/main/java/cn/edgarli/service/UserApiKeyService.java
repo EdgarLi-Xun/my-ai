@@ -1,6 +1,7 @@
 package cn.edgarli.service;
 
 import cn.edgarli.ai.provider.ProviderCatalog;
+import cn.edgarli.ai.provider.ProviderProtocol;
 import cn.edgarli.ai.provider.ProviderSpec;
 import cn.edgarli.common.BizException;
 import cn.edgarli.entity.User;
@@ -143,6 +144,18 @@ public class UserApiKeyService {
         ProviderSpec spec = catalog.require(request.getProvider());
         key.setProvider(spec.name());
 
+        String requestedProtocol = trimToNull(request.getProtocol());
+        if (requestedProtocol != null) {
+            try {
+                ProviderProtocol.valueOf(requestedProtocol.toUpperCase());
+            } catch (IllegalArgumentException e) {
+                throw BizException.badRequest("不支持的协议: " + requestedProtocol);
+            }
+            key.setProtocol(requestedProtocol.toUpperCase());
+        } else {
+            key.setProtocol(null); // null = 用 provider 默认协议
+        }
+
         String requestBaseUrl = trimToNull(request.getBaseUrl());
         key.setBaseUrl(requestBaseUrl == null ? spec.defaultBaseUrl() : validateUrl(requestBaseUrl));
 
@@ -205,13 +218,18 @@ public class UserApiKeyService {
         return BizException.notFound("Key 不存在");
     }
 
-    private static UserApiKeyResponse toResponse(UserApiKey key, Long defaultKeyId) {
+    private UserApiKeyResponse toResponse(UserApiKey key, Long defaultKeyId) {
         boolean hasApiKey = trimToNull(key.getApiKey()) != null;
+        String protocol = key.getProtocol();
+        if (protocol == null) {
+            protocol = catalog.require(key.getProvider()).protocol().name();
+        }
         return new UserApiKeyResponse(
                 key.getId(),
                 key.getUserId(),
                 key.getName(),
                 key.getProvider(),
+                protocol,
                 mask(key.getApiKey()),
                 hasApiKey,
                 key.getBaseUrl(),

@@ -10,6 +10,7 @@ public record UserApiKeyResponse(
         Long userId,
         String name,
         String provider,
+        String protocol,
         String maskedApiKey,
         boolean hasApiKey,
         String baseUrl,

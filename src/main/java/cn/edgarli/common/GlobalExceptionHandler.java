@@ -2,6 +2,8 @@ package cn.edgarli.common;
 
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.http.converter.HttpMessageNotReadableException;
+import org.springframework.security.access.AccessDeniedException;
+import org.springframework.security.core.AuthenticationException;
 import org.springframework.web.HttpRequestMethodNotSupportedException;
 import org.springframework.web.bind.MissingServletRequestParameterException;
 import org.springframework.web.bind.annotation.ExceptionHandler;
@@ -34,6 +36,16 @@ public class GlobalExceptionHandler {
     @ExceptionHandler(NoResourceFoundException.class)
     public Result<Void> handleNotFound(NoResourceFoundException exception) {
         return Result.failure(BizException.NOT_FOUND, "接口不存在");
+    }
+
+    @ExceptionHandler(AuthenticationException.class)
+    public Result<Void> handleAuthentication(AuthenticationException exception) {
+        return Result.failure(BizException.UNAUTHORIZED, "未登录或登录已过期");
+    }
+
+    @ExceptionHandler(AccessDeniedException.class)
+    public Result<Void> handleAccessDenied(AccessDeniedException exception) {
+        return Result.failure(BizException.FORBIDDEN, "无权访问");
     }
 
     @ExceptionHandler(Exception.class)

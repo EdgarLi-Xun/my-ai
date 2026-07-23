@@ -16,6 +16,8 @@ public class UserApiKeyRequest {
 
     private String provider;
 
+    private String protocol;
+
     @ToString.Exclude
     private String apiKey;
 

@@ -27,7 +27,7 @@ import java.util.Map;
  * </pre>
  */
 @Component
-@ConfigurationProperties(prefix = "my-ai.providers")
+@ConfigurationProperties(prefix = "my-ai")
 public class ProviderCatalog {
 
     private final Map<String, ProviderSpec> providers = new LinkedHashMap<>();

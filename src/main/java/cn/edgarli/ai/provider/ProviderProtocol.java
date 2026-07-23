@@ -7,5 +7,6 @@ package cn.edgarli.ai.provider;
  */
 public enum ProviderProtocol {
     OPENAI_COMPATIBLE,
-    OLLAMA
+    OLLAMA,
+    ANTHROPIC
 }

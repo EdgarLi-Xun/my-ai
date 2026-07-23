@@ -3,6 +3,7 @@ CREATE TABLE IF NOT EXISTS user (
     name VARCHAR(100) NOT NULL,
     email VARCHAR(100),
     default_key_id BIGINT,
+    password_hash VARCHAR(255),
     create_time TIMESTAMP DEFAULT CURRENT_TIMESTAMP
 );
 
@@ -26,3 +27,7 @@ CREATE INDEX IF NOT EXISTS idx_user_api_key_user_id ON user_api_key(user_id);
 
 ALTER TABLE user ADD CONSTRAINT IF NOT EXISTS fk_user_default_key
     FOREIGN KEY (default_key_id) REFERENCES user_api_key(id) ON DELETE SET NULL;
+
+ALTER TABLE user ADD COLUMN IF NOT EXISTS password_hash VARCHAR(255);
+
+ALTER TABLE user_api_key ADD COLUMN IF NOT EXISTS protocol VARCHAR(30);

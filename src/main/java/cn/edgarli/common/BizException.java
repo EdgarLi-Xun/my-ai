@@ -6,6 +6,8 @@ package cn.edgarli.common;
 public class BizException extends RuntimeException {
 
     public static final int BAD_REQUEST = 4000;
+    public static final int UNAUTHORIZED = 4010;
+    public static final int FORBIDDEN = 4030;
     public static final int NOT_FOUND = 4040;
     public static final int CONFLICT = 4090;
     public static final int UPSTREAM_ERROR = 5020;
@@ -23,6 +25,14 @@ public class BizException extends RuntimeException {
 
     public static BizException badRequest(String message) {
         return new BizException(BAD_REQUEST, message);
+    }
+
+    public static BizException unauthorized(String message) {
+        return new BizException(UNAUTHORIZED, message);
+    }
+
+    public static BizException forbidden(String message) {
+        return new BizException(FORBIDDEN, message);
     }
 
     public static BizException notFound(String message) {

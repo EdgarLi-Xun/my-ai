@@ -28,4 +28,21 @@ public interface UserMapper extends BaseMapper<User> {
                 .where(User::getId).eq(id)
                 .update() ? 1 : 0;
     }
+
+    default User findByEmail(String email) {
+        return selectOneByQuery(
+                QueryWrapper.create().where(User::getEmail).eq(email));
+    }
+
+    default String findPasswordHashById(Long id) {
+        User user = selectOneById(id);
+        return user == null ? null : user.getPasswordHash();
+    }
+
+    default int updatePasswordHash(Long id, String hash) {
+        return UpdateChain.of(this)
+                .set(User::getPasswordHash, hash)
+                .where(User::getId).eq(id)
+                .update() ? 1 : 0;
+    }
 }

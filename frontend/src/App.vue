@@ -1,5 +1,42 @@
 <template>
   <div class="app">
+    <!-- 登录遮罩 -->
+    <div v-if="!token" class="auth-overlay">
+      <div class="auth-card">
+        <h2>{{ authMode === 'login' ? '登录' : '注册' }}</h2>
+        <form @submit.prevent="doAuth" class="auth-form">
+          <input
+            v-if="authMode === 'register'"
+            v-model="auth.name"
+            placeholder="用户名"
+            :disabled="authLoading"
+          />
+          <input
+            v-model="auth.email"
+            type="email"
+            placeholder="邮箱"
+            :disabled="authLoading"
+          />
+          <input
+            v-model="auth.password"
+            type="password"
+            autocomplete="current-password"
+            placeholder="密码（至少 6 位）"
+            :disabled="authLoading"
+          />
+          <button class="primary auth-submit" :disabled="authLoading || !canAuth">
+            {{ authLoading ? '处理中...' : authMode === 'login' ? '登录' : '注册' }}
+          </button>
+        </form>
+        <div class="auth-switch">
+          <button class="text-button" @click="toggleAuthMode">
+            {{ authMode === 'login' ? '没有账号？去注册' : '已有账号？去登录' }}
+          </button>
+        </div>
+        <div v-if="authError" class="panel-error" @click="authError = ''">{{ authError }}（点击关闭）</div>
+      </div>
+    </div>
+
     <header class="header">
       <div>
         <h1>MyAi Chat</h1>
@@ -9,53 +46,32 @@
         <p v-else class="current-key warning">当前用户没有可用的默认 Key</p>
       </div>
       <div class="controls">
-        <label for="user">用户</label>
-        <select id="user" v-model.number="selectedUserId" :disabled="loading || configLoading">
-          <option :value="null">请选择用户</option>
-          <option v-for="user in users" :key="user.id" :value="user.id">
-            {{ user.name }}
-          </option>
-        </select>
+        <span v-if="currentUser" class="user-badge">
+          👤 {{ currentUser.name }}
+        </span>
         <button class="secondary" @click="showManager = !showManager">
-          {{ showManager ? '收起管理' : '管理用户与 Key' }}
+          {{ showManager ? '收起管理' : '管理 Key' }}
         </button>
         <button class="secondary" @click="clear" :disabled="loading || messages.length === 0">
           清空
         </button>
+        <button class="secondary" @click="logout">退出</button>
       </div>
     </header>
 
     <div class="workspace">
       <aside v-if="showManager" class="manager">
-        <section class="panel-section">
-          <div class="section-title">
-            <h2>用户</h2>
-            <button
-              v-if="selectedUser"
-              class="danger-link"
-              :disabled="configLoading"
-              @click="deleteUser"
-            >删除当前用户</button>
-          </div>
-          <form class="compact-form" @submit.prevent="createUser">
-            <input v-model="userForm.name" placeholder="用户名" :disabled="configLoading" />
-            <input v-model="userForm.email" placeholder="邮箱（可选）" :disabled="configLoading" />
-            <button class="primary" :disabled="configLoading || !userForm.name.trim()">新增用户</button>
-          </form>
-        </section>
-
         <section class="panel-section keys-section">
           <div class="section-title">
             <h2>Key 配置</h2>
             <button
               class="secondary small"
-              :disabled="!selectedUser || configLoading"
+              :disabled="configLoading"
               @click="startCreateKey"
             >新增 Key</button>
           </div>
 
-          <div v-if="!selectedUser" class="panel-empty">请先选择或创建用户</div>
-          <div v-else-if="keys.length === 0" class="panel-empty">该用户还没有 Key</div>
+          <div v-if="keys.length === 0" class="panel-empty">还没有 Key，请新增一个</div>
           <div v-else class="key-list">
             <article v-for="key in keys" :key="key.id" class="key-card">
               <div class="key-heading">
@@ -65,7 +81,7 @@
                   {{ key.enabled ? '启用' : '禁用' }}
                 </span>
               </div>
-              <div class="key-meta">{{ key.provider.toUpperCase() }} · {{ key.modelName }}</div>
+              <div class="key-meta">{{ key.provider.toUpperCase() }} · {{ key.protocol || '默认' }} · {{ key.modelName }}</div>
               <div class="key-meta">{{ key.maskedApiKey || '无需 API Key' }}</div>
               <div class="key-actions">
                 <button class="text-button" @click="startEditKey(key)">编辑</button>
@@ -96,6 +112,15 @@
                 <option v-for="provider in providers" :key="provider.name" :value="provider.name">
                   {{ provider.displayName }}
                 </option>
+              </select>
+            </label>
+            <label>
+              协议
+              <select v-model="keyForm.protocol" :disabled="configLoading">
+                <option value="">默认（Provider 决定）</option>
+                <option value="OPENAI_COMPATIBLE">OpenAI 兼容</option>
+                <option value="ANTHROPIC">Anthropic 兼容</option>
+                <option value="OLLAMA">Ollama</option>
               </select>
             </label>
             <label>
@@ -135,8 +160,7 @@
       <section class="chat">
         <main class="messages" ref="messagesRef">
           <div v-if="messages.length === 0 && !loading" class="empty">
-            <template v-if="!selectedUser">选择用户后开始聊天 👋</template>
-            <template v-else-if="!defaultKey">请先为该用户设置一个启用的默认 Key</template>
+            <template v-if="!defaultKey">请先设置一个启用的默认 Key</template>
             <template v-else>使用 {{ defaultKey.name }} 开始聊天吧 👋</template>
           </div>
 
@@ -174,14 +198,32 @@
 <script setup>
 import { computed, nextTick, onMounted, ref, watch } from 'vue'
 
-const users = ref([])
-const selectedUserId = ref(null)
+const TOKEN_KEY = 'myai.token'
+
+// --- 登录态 ---
+const token = ref(null)
+const currentUser = ref(null)
+const authMode = ref('login')
+const authLoading = ref(false)
+const authError = ref('')
+const auth = ref({ name: '', email: '', password: '' })
+
+const canAuth = computed(() => {
+  const e = (auth.value.email || '').trim()
+  const p = (auth.value.password || '').trim()
+  if (!e || !p) return false
+  if (authMode.value === 'register') {
+    return (auth.value.name || '').trim().length > 0 && p.length >= 6
+  }
+  return true
+})
+
+// --- 应用状态 ---
 const keys = ref([])
 const providers = ref([])
 const showManager = ref(true)
 const showKeyForm = ref(false)
 const editingKeyId = ref(null)
-const userForm = ref({ name: '', email: '' })
 const keyForm = ref(newKeyForm())
 const configLoading = ref(false)
 const configError = ref('')
@@ -193,26 +235,28 @@ const error = ref('')
 const messagesRef = ref(null)
 const inputRef = ref(null)
 
-const selectedUser = computed(() => users.value.find(user => user.id === selectedUserId.value) || null)
 const defaultKey = computed(() => keys.value.find(key => key.defaultKey && key.enabled) || null)
 const assistantLabel = computed(() => defaultKey.value
   ? `${defaultKey.value.name} · ${defaultKey.value.provider.toUpperCase()}`
   : 'AI')
 const canSend = computed(() => Boolean(defaultKey.value && input.value.trim() && !loading.value))
 
-watch(selectedUserId, async (userId, previousUserId) => {
-  if (userId !== previousUserId) {
-    clear()
-    cancelKeyForm()
-    await loadKeys(userId)
-  }
-})
 watch(messages, scrollToBottom, { deep: true })
 watch(loading, value => { if (!value) inputRef.value?.focus() })
 
 onMounted(async () => {
   await loadProviders()
-  await loadUsers()
+  const saved = localStorage.getItem(TOKEN_KEY)
+  if (saved) {
+    token.value = saved
+    try {
+      currentUser.value = await api('/api/auth/me')
+      await loadKeys()
+    } catch {
+      token.value = null
+      localStorage.removeItem(TOKEN_KEY)
+    }
+  }
 })
 
 function newKeyForm(providerName) {
@@ -223,6 +267,7 @@ function newKeyForm(providerName) {
   return {
     name: '',
     provider: target.name || 'ollama',
+    protocol: '',
     apiKey: '',
     baseUrl: target.defaultBaseUrl || 'http://localhost:11434',
     modelName: target.defaultModel || 'qwen2.5:7b',
@@ -230,17 +275,12 @@ function newKeyForm(providerName) {
   }
 }
 
-async function loadProviders() {
-  try {
-    providers.value = await api('/api/providers')
-  } catch (e) {
-    providers.value = []
-    configError.value = '加载 Provider 池失败：' + (e.message || String(e))
-  }
-}
-
 async function api(url, options = {}) {
-  const response = await fetch(url, options)
+  const headers = { ...(options.headers || {}) }
+  if (token.value) {
+    headers['Authorization'] = 'Bearer ' + token.value
+  }
+  const response = await fetch(url, { ...options, headers })
   const text = await response.text()
   let body = null
   if (text) {
@@ -251,6 +291,12 @@ async function api(url, options = {}) {
     }
   }
   if (body && typeof body === 'object' && 'code' in body && 'message' in body) {
+    if (body.code === 4010) {
+      localStorage.removeItem(TOKEN_KEY)
+      token.value = null
+      currentUser.value = null
+      throw new Error('请重新登录')
+    }
     if (body.code !== 0) {
       throw new Error(body.message || `业务错误 ${body.code}`)
     }
@@ -262,70 +308,67 @@ async function api(url, options = {}) {
   return body
 }
 
-async function loadUsers() {
-  configError.value = ''
+// --- 认证 ---
+function toggleAuthMode() {
+  authMode.value = authMode.value === 'login' ? 'register' : 'login'
+  authError.value = ''
+}
+
+async function doAuth() {
+  authLoading.value = true
+  authError.value = ''
   try {
-    const currentId = selectedUserId.value
-    users.value = await api('/api/users')
-    const nextId = users.value.some(user => user.id === currentId)
-      ? currentId
-      : users.value[0]?.id ?? null
-    selectedUserId.value = nextId
-    if (nextId === currentId) {
-      await loadKeys(nextId)
-    }
+    const endpoint = authMode.value === 'login' ? '/api/auth/login' : '/api/auth/register'
+    const body = authMode.value === 'login'
+      ? { email: auth.value.email.trim(), password: auth.value.password }
+      : { name: auth.value.name.trim(), email: auth.value.email.trim(), password: auth.value.password }
+    const result = await api(endpoint, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(body)
+    })
+    token.value = result.token
+    currentUser.value = { id: result.userId, name: result.name, email: result.email }
+    localStorage.setItem(TOKEN_KEY, result.token)
+    auth.value = { name: '', email: '', password: '' }
+    await loadProviders()
+    await loadKeys()
   } catch (e) {
-    configError.value = '加载用户失败：' + (e.message || String(e))
+    authError.value = (authMode.value === 'login' ? '登录' : '注册') + '失败：' + (e.message || String(e))
+  } finally {
+    authLoading.value = false
   }
 }
 
-async function loadKeys(userId = selectedUserId.value) {
-  if (!userId) {
+function logout() {
+  token.value = null
+  currentUser.value = null
+  localStorage.removeItem(TOKEN_KEY)
+  keys.value = []
+  messages.value = []
+  error.value = ''
+  showKeyForm.value = false
+}
+
+// --- Provider ---
+async function loadProviders() {
+  try {
+    providers.value = await api('/api/providers')
+  } catch {
+    providers.value = []
+  }
+}
+
+// --- Key ---
+async function loadKeys() {
+  if (!currentUser.value) {
     keys.value = []
     return
   }
   try {
-    const result = await api(`/api/users/${userId}/keys`)
-    if (selectedUserId.value === userId) {
-      keys.value = result
-    }
-  } catch (e) {
+    keys.value = await api(`/api/users/${currentUser.value.id}/keys`)
+  } catch {
     keys.value = []
-    configError.value = '加载 Key 失败：' + (e.message || String(e))
-  }
-}
-
-async function createUser() {
-  configLoading.value = true
-  configError.value = ''
-  try {
-    const user = await api('/api/users', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(userForm.value)
-    })
-    userForm.value = { name: '', email: '' }
-    await loadUsers()
-    selectedUserId.value = user.id
-  } catch (e) {
-    configError.value = '新增用户失败：' + (e.message || String(e))
-  } finally {
-    configLoading.value = false
-  }
-}
-
-async function deleteUser() {
-  if (!selectedUser.value || !window.confirm(`确定删除用户“${selectedUser.value.name}”及其全部 Key 吗？`)) return
-  configLoading.value = true
-  configError.value = ''
-  try {
-    await api(`/api/users/${selectedUser.value.id}`, { method: 'DELETE' })
-    selectedUserId.value = null
-    await loadUsers()
-  } catch (e) {
-    configError.value = '删除用户失败：' + (e.message || String(e))
-  } finally {
-    configLoading.value = false
   }
 }
 
@@ -340,6 +383,7 @@ function startEditKey(key) {
   keyForm.value = {
     name: key.name || '',
     provider: key.provider || providers.value[0]?.name || 'ollama',
+    protocol: key.protocol || '',
     apiKey: '',
     baseUrl: key.baseUrl,
     modelName: key.modelName,
@@ -364,22 +408,23 @@ function applyProviderDefaults() {
 }
 
 async function saveKey() {
-  if (!selectedUserId.value) return
+  const userId = currentUser.value?.id
+  if (!userId) return
   const keyId = editingKeyId.value
   const wasDefault = keys.value.some(key => key.id === keyId && key.defaultKey)
   configLoading.value = true
   configError.value = ''
   try {
     const url = keyId
-      ? `/api/users/${selectedUserId.value}/keys/${keyId}`
-      : `/api/users/${selectedUserId.value}/keys`
+      ? `/api/users/${userId}/keys/${keyId}`
+      : `/api/users/${userId}/keys`
     await api(url, {
       method: keyId ? 'PUT' : 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(keyForm.value)
     })
     cancelKeyForm()
-    await loadUsers()
+    await loadKeys()
     if (wasDefault) clear()
   } catch (e) {
     configError.value = '保存 Key 失败：' + (e.message || String(e))
@@ -389,12 +434,14 @@ async function saveKey() {
 }
 
 async function setDefaultKey(key) {
+  const userId = currentUser.value?.id
+  if (!userId) return
   configLoading.value = true
   configError.value = ''
   try {
-    await api(`/api/users/${selectedUserId.value}/keys/${key.id}/default`, { method: 'PUT' })
+    await api(`/api/users/${userId}/keys/${key.id}/default`, { method: 'PUT' })
     clear()
-    await loadUsers()
+    await loadKeys()
   } catch (e) {
     configError.value = '设置默认 Key 失败：' + (e.message || String(e))
   } finally {
@@ -403,13 +450,15 @@ async function setDefaultKey(key) {
 }
 
 async function deleteKey(key) {
-  if (!window.confirm(`确定删除 Key“${key.name}”吗？`)) return
+  const userId = currentUser.value?.id
+  if (!userId) return
+  if (!window.confirm(`确定删除 Key"${key.name}"吗？`)) return
   configLoading.value = true
   configError.value = ''
   try {
-    await api(`/api/users/${selectedUserId.value}/keys/${key.id}`, { method: 'DELETE' })
+    await api(`/api/users/${userId}/keys/${key.id}`, { method: 'DELETE' })
     if (key.defaultKey) clear()
-    await loadUsers()
+    await loadKeys()
   } catch (e) {
     configError.value = '删除 Key 失败：' + (e.message || String(e))
   } finally {
@@ -417,9 +466,10 @@ async function deleteKey(key) {
   }
 }
 
+// --- 聊天 ---
 async function send() {
   const text = input.value.trim()
-  if (!text || loading.value || !defaultKey.value || !selectedUserId.value) return
+  if (!text || loading.value || !defaultKey.value) return
 
   error.value = ''
   messages.value.push({ role: 'user', content: text })
@@ -430,7 +480,7 @@ async function send() {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
-        userId: selectedUserId.value,
+        userId: currentUser.value.id,
         messages: messages.value
       })
     })
@@ -468,6 +518,56 @@ function scrollToBottom() {
   box-shadow: 0 0 24px rgba(0, 0, 0, 0.06);
 }
 
+/* ---- 登录遮罩 ---- */
+.auth-overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 100;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: rgba(0, 0, 0, 0.35);
+}
+
+.auth-card {
+  width: 360px;
+  padding: 28px 24px;
+  border-radius: 14px;
+  background: #fff;
+  box-shadow: 0 12px 40px rgba(0, 0, 0, 0.15);
+}
+
+.auth-card h2 {
+  text-align: center;
+  font-size: 18px;
+  margin-bottom: 18px;
+}
+
+.auth-form {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.auth-form input {
+  padding: 9px 12px;
+  border: 1px solid #d0d0d0;
+  border-radius: 8px;
+  font-size: 14px;
+}
+
+.auth-submit {
+  padding: 10px;
+  font-size: 14px;
+  margin-top: 4px;
+}
+
+.auth-switch {
+  text-align: center;
+  margin-top: 12px;
+}
+
+/* ---- 头部 ---- */
 .header {
   display: flex;
   align-items: center;
@@ -501,9 +601,13 @@ function scrollToBottom() {
   justify-content: flex-end;
 }
 
-.controls label {
-  color: #666;
+.user-badge {
+  padding: 4px 10px;
+  border-radius: 999px;
+  background: #dbeafe;
+  color: #1d4ed8;
   font-size: 13px;
+  font-weight: 500;
 }
 
 select,
@@ -515,7 +619,6 @@ button {
 
 .controls select,
 .secondary,
-.compact-form input,
 .key-form input,
 .key-form select {
   padding: 7px 10px;
@@ -566,14 +669,12 @@ textarea:disabled {
   font-size: 14px;
 }
 
-.compact-form,
 .key-form {
   display: flex;
   flex-direction: column;
   gap: 9px;
 }
 
-.compact-form input,
 .key-form input,
 .key-form select {
   width: 100%;
@@ -597,7 +698,6 @@ textarea:disabled {
   font-size: 12px;
 }
 
-.danger-link,
 .text-button {
   padding: 0;
   border: none;
@@ -606,7 +706,6 @@ textarea:disabled {
   font-size: 12px;
 }
 
-.danger-link,
 .text-button.danger {
   color: #b91c1c;
 }

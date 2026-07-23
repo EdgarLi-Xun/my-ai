@@ -1,0 +1,220 @@
+# API 参考
+
+> 来源：`src/main/java/cn/edgarli/web/*Controller.java` 与 `common/Result.java`。
+> 与 README.md / 「数据模型」叙述不一致时，以本文档（直接来自源码）为准。
+
+## 0. 通用约定
+
+### 响应外壳
+
+所有接口（成功 / 失败）统一返回 `Result<T>`，HTTP 状态码恒为 200。错误通过业务码表达：
+
+```json
+{ "code": 0, "message": "success", "data": <T> }
+```
+
+### 错误码
+
+| code | 含义 | 触发场景 |
+| --- | --- | --- |
+| `0` | 成功 | 全部 2xx 业务 |
+| `4000` | 请求参数错误 | `BizException.badRequest`、`HttpMessageNotReadableException`、`MethodArgumentTypeMismatchException`、`MissingServletRequestParameterException`、`HttpRequestMethodNotSupportedException` |
+| `4010` | 未登录 | 未带 JWT 或 JWT 过期/无效；由 `RestAuthenticationEntryPoint` 或 `AuthenticationException` 返回 |
+| `4030` | 无权访问 | 已登录但试图操作其他用户的资源；由 `RestAccessDeniedHandler` 或 `BizException.forbidden` 返回 |
+| `4040` | 资源不存在 | `BizException.notFound`、`NoResourceFoundException`（接口路径不存在也走这里） |
+| `4090` | 业务冲突 | 用户没有可用默认 Key（`/api/chat` 调用前）；邮箱已被注册 |
+| `5020` | 上游错误 | 预留（`BizException.upstream`，当前未触发） |
+| `5000` | 服务异常 | 其他未捕获异常（`GlobalExceptionHandler` 兜底） |
+
+### 认证
+
+除 `/api/auth/*`、`GET /api/providers`、静态资源和 `/h2-console/**` 外，所有接口必须在请求头携带 JWT：
+
+```
+Authorization: Bearer <token>
+```
+
+- 注册 / 登录成功后获得 `token`（HS256，默认 7 天有效）。
+- 4010 返回不等于前端被动断开——前端在 `api()` 包装函数里检测到 `code === 4010` 后自动清空 token 并弹出登录卡片。
+
+### Key 脱敏
+
+`/api/users/{userId}/keys*` 系列响应里 `apiKey` 不会出现，只暴露两个字段：
+
+- `maskedApiKey`：`null` 或 `****`（≤4 字符时）或 `****` + 原值末尾 4 字符。
+- `hasApiKey`：`true` / `false`。
+
+更新时 `apiKey` 留空 = 保留原值（见 `UserApiKeyService.mergeAndValidate`）。
+
+---
+
+## 0.5 认证 `/api/auth`
+
+### POST `/api/auth/register`
+
+注册新用户。
+
+```json
+{ "name": "Alice", "email": "alice@example.com", "password": "123456" }
+```
+
+- `name` / `email` / `password` 均必填；`password` 至少 6 位 → 4000。
+- `email` 已存在 → 4090 该邮箱已被注册。
+- 密码以 BCrypt 散列存储，不会明文落库。
+- 成功返回 `AuthResponse`：`{ userId, name, email, token }`。
+
+### POST `/api/auth/login`
+
+```json
+{ "email": "alice@example.com", "password": "123456" }
+```
+
+- 邮箱或密码错误 → 4010 邮箱或密码错误（不做区分）。
+- 成功返回 `AuthResponse`。
+
+### GET `/api/auth/me`
+
+需登录。返回当前用户的完整 `User` 信息（不含 `passwordHash`）。
+
+---
+
+## 1. 用户 `/api/users`（需登录）
+
+### GET `/api/users`
+
+列出当前用户（已登录后仅返回自己，不再是全量列表）。→ 需登录。
+
+### GET `/api/users/{id}`
+
+获取单个用户。只能查自己，`id` 不等于登录 `userId` → 4030。→ 需登录。
+
+### POST `/api/users`
+
+创建用户（保留接口；推荐用 `/api/auth/register`）。→ 需登录。
+
+```json
+{ "name": "Alice", "email": "alice@example.com" }
+```
+
+- `name` 必填且 trim 后非空，否则 4000。
+- `email` 可空，trim 后非空才写入。
+- `defaultKeyId` 创建时为 `null`。
+
+### DELETE `/api/users/{id}`
+
+删除用户（只能删自己），并级联删除其全部 Key。→ 需登录，id 不匹配 → 4030。
+
+---
+
+## 2. 用户 Key `/api/users/{userId}/keys`
+
+> 由 `UserApiKeyController` 暴露。`userId` 不存在时统一返回 4040；`keyId` 与 `userId` 不匹配时也返回 4040（`UserApiKeyService.requireKey`）。
+
+### GET `/api/users/{userId}/keys`
+
+列出该用户的全部 Key（按 id 升序）。
+
+### GET `/api/users/{userId}/keys/{keyId}`
+
+返回单条 Key（含脱敏 `maskedApiKey`、`hasApiKey`、`defaultKey` 标志）。
+
+### POST `/api/users/{userId}/keys`
+
+新增 Key 配置。
+
+请求体（`UserApiKeyRequest`）：
+
+| 字段 | 必填 | 行为 |
+| --- | --- | --- |
+| `name` | ✅ | 必填字符串 |
+| `provider` | ✅ | 必须在 `application.yml` 的 `my-ai.providers` 中存在（大小写不敏感），否则 4000 `不支持的 provider` |
+| `apiKey` | 看 provider | 当 `requiresKey=true` 且启用该 Key 时必须非空（4000） |
+| `baseUrl` | ❌ | 空 → 用 provider 的 `defaultBaseUrl`；非空必须是合法 http(s) URL，否则 4000 |
+| `modelName` | ❌ | 空 → 用 provider 的 `defaultModel` |
+| `enabled` | ❌ | 创建时缺省视为 `true` |
+
+副作用：当用户当前 `defaultKeyId` 为 `null` 且新 Key `enabled=true` 时，自动把 `defaultKeyId` 设为新 Key 的 id。
+
+### PUT `/api/users/{userId}/keys/{keyId}`
+
+更新 Key。请求体同上，但 `apiKey` 留空 = 保留原值。
+
+副作用：如果更新的正是默认 Key 且 `enabled` 被改为 `false`，则把 `defaultKeyId` 置 `null`，但不会自动切换到其他 Key。
+
+### DELETE `/api/users/{userId}/keys/{keyId}`
+
+删除 Key。如果删除的是默认 Key，把 `defaultKeyId` 置 `null`。
+
+### PUT `/api/users/{userId}/keys/{keyId}/default`
+
+设为默认 Key。前提：
+
+- 该 Key 存在且属于该用户；
+- `enabled=true`；
+- 通过 `validateConfiguration`（即所需 provider 的 `apiKey` 非空）。
+
+不满足 → 4000。
+
+---
+
+## 3. 厂家池 `/api/providers`
+
+### GET `/api/providers`
+
+只读，公开接口（无需登录）。
+
+每项字段（`ProviderSpec`）：
+
+| 字段 | 含义 |
+| --- | --- |
+| `name` | 厂家键（小写），如 `openai`、`ollama` |
+| `displayName` | 厂家展示名 |
+| `protocol` | `OPENAI_COMPATIBLE` 或 `OLLAMA` |
+| `defaultBaseUrl` | 用户未填时的默认 base URL |
+| `defaultModel` | 用户未填时的默认模型 |
+| `requiresKey` | 是否必须填写 API Key |
+
+---
+
+## 4. 聊天 `/api/chat`
+
+### POST `/api/chat`
+
+仅此一个端点。请求体（`ChatRequest`）：
+
+```json
+{
+  "userId": 1,
+  "messages": [
+    { "role": "system",    "content": "..." },
+    { "role": "user",      "content": "你好" },
+    { "role": "assistant", "content": "..." }
+  ]
+}
+```
+
+- `userId` 必填。后端不接受 `provider` / `keyId` / API Key。
+- `messages` 必须非空且每条 `content` 非空 → 否则 4000。
+- `role` 仅识别 `system` / `assistant` / 其他（默认 `user`）。
+
+成功返回 `ChatResponse`:
+
+```json
+{ "code": 0, "message": "success", "data": { "reply": "..." } }
+```
+
+服务端流程（`ChatService.chat`）：
+
+1. `keyService.getDefaultForChat(userId)`：取用户的默认 Key。
+   - 用户不存在 → 4040；
+   - `defaultKeyId` 为 null 或默认 Key 不存在 / 被禁用 → 4090 用户没有可用的默认 Key；
+   - 配置不合法 → 4000。
+2. `chatClientFactory.getClient(key)`：按 Key 的 `provider` / `baseUrl` / `modelName` / `apiKey` 现场构建 `ChatClient`（不缓存）。
+3. 调用 `chatClient.prompt().messages(...).call().content()` 拿到回复。
+
+`provider` 注册逻辑：
+
+- `OPENAI_COMPATIBLE` → 走 `OpenAiChatModel.builder().options(...).build()`。
+- `OLLAMA` → 走 `OllamaChatModel.builder().ollamaApi(...).options(...).build()`。
+
+修改默认 Key 配置后，**下一次**聊天请求立刻生效，不需要重启。

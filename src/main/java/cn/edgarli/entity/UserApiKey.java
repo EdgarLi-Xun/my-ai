@@ -25,6 +25,8 @@ public class UserApiKey {
 
     private String provider;
 
+    private String protocol;
+
     @Column("api_key")
     @ToString.Exclude
     private String apiKey;
