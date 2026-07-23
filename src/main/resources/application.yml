@@ -1,0 +1,30 @@
+spring:
+  application:
+    name: myAi
+
+  # H2 嵌入式数据库配置（文件模式，数据保存在 ./data/myai.mv.db）
+  datasource:
+    url: jdbc:h2:file:./data/myai;DB_CLOSE_DELAY=-1;DB_CLOSE_ON_EXIT=FALSE;MODE=MySQL;NON_KEYWORDS=USER
+    username: sa
+    password:
+    driver-class-name: org.h2.Driver
+
+  sql:
+    init:
+      mode: always
+
+  # H2 控制台，启动后访问 http://localhost:8080/h2-console
+  h2:
+    console:
+      enabled: true
+      path: /h2-console
+      settings:
+        web-allow-others: false
+
+server:
+  port: 8080
+
+logging:
+  level:
+    org.springframework.ai: info
+    cn.edgarli.mapper: info
