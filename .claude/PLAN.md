@@ -40,3 +40,25 @@
 - 角色/权限矩阵、管理员
 - 旧用户密码迁移策略（升级注释见 REQUIREMENTS.md）
 - `mvn test` 测试用例（仍是空套件）
+
+---
+
+## 第 8 次对话（2026-07-23）— ✅ 已完成（2026-07-23）
+
+### 目标
+1. 修复 Provider 下拉空：`@ConfigurationProperties` 前缀修正
+2. 修复密码写库失败：`passwordHash` 改 insert 前赋值
+3. 为 Key 增加协议选择列，支持 OpenAI 兼容 / Anthropic / Ollama
+
+### 子步骤
+
+| # | 步骤 | 状态 |
+| --- | --- | --- |
+| 1 | 修复 ProviderCatalog 前缀 `my-ai.providers` → `my-ai` | ✅ |
+| 2 | AuthService 密码 hash 改 insert 前 set | ✅ |
+| 3 | 加 `spring-ai-anthropic`、`ProviderProtocol.ANTHROPIC` | ✅ |
+| 4 | `user_api_key` 加 `protocol` 列 + entity/DTO/response | ✅ |
+| 5 | `ChatClientFactory` 支持 Anthropic 客户端 | ✅ |
+| 6 | 编译修复（import + static 问题） | ✅ |
+| 7 | 前端 key form 加协议下拉框 | ✅ |
+| 8 | 构建验证 | ✅ |
