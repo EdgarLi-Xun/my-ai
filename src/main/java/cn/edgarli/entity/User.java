@@ -11,6 +11,13 @@ import lombok.ToString;
 
 import java.time.LocalDateTime;
 
+/**
+ * 用户实体。
+ * <p>
+ * {@code defaultKeyId} 指向 {@link UserApiKey#getId()}，当默认 Key 被禁用或删除时
+ * 通过 {@code ON DELETE SET NULL} 置 null（参见 schema.sql）。{@code passwordHash}
+ * 用 BCrypt 散列，加 {@link JsonIgnore} / {@link ToString.Exclude} 不外露。
+ */
 @Data
 @NoArgsConstructor
 @Table("user")

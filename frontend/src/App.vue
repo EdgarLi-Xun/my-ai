@@ -37,6 +37,7 @@
       </div>
     </div>
 
+    <!-- 顶栏：当前用户、默认 Key 状态、面板切换 -->
     <header class="header">
       <div>
         <h1>MyAi Chat</h1>
@@ -60,6 +61,7 @@
     </header>
 
     <div class="workspace">
+      <!-- Key 管理面板：列出/新增/编辑/删除/设默认 Key -->
       <aside v-if="showManager" class="manager">
         <section class="panel-section keys-section">
           <div class="section-title">
@@ -157,6 +159,7 @@
         </div>
       </aside>
 
+      <!-- 聊天区：消息列表 + 输入框，发送至 /api/chat -->
       <section class="chat">
         <main class="messages" ref="messagesRef">
           <div v-if="messages.length === 0 && !loading" class="empty">
@@ -196,6 +199,11 @@
 </template>
 
 <script setup>
+/**
+ * MyAi 前端单文件组件：登录/注册遮罩 + 顶栏 + Key 管理面板 + 聊天区。
+ * 所有 API 调用经下方 `api` 封装统一携带 `Authorization: Bearer <token>`；
+ * JWT 仅存在组件 state（`token`），刷新即失效——会话级，不持久化。
+ */
 import { computed, nextTick, onMounted, ref, watch } from 'vue'
 
 const TOKEN_KEY = 'myai.token'

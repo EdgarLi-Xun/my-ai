@@ -79,6 +79,10 @@ public class UserController {
         }
     }
 
+    /**
+     * 取当前登录用户 ID。其它控制器需要把路径或请求体里的 userId 与登录主体对齐时，
+     * 统一调用此 helper（不要直接读 SecurityContextHolder）。
+     */
     static Long currentUserId() {
         AuthPrincipal principal = (AuthPrincipal) SecurityContextHolder.getContext().getAuthentication();
         if (principal == null || principal.getUserId() == null) {

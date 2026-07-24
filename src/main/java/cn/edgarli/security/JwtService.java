@@ -12,6 +12,10 @@ import java.nio.charset.StandardCharsets;
 import java.util.Date;
 import java.util.Map;
 
+/**
+ * JWT 签发与解析。密钥来源 {@code my-ai.jwt.secret}，必须 ≥ 32 字节（256 bits），
+ * 否则启动失败。Token claim 仅含 {@code uid}（userId）。
+ */
 @Service
 public class JwtService {
 
