@@ -79,8 +79,8 @@
 
 | # | 步骤 | 状态 |
 | --- | --- | --- |
-| 1 | `git rm --cached` 停止跟踪 | 🚧 进行中 |
-| 2 | 清理历史（filter-branch 或 filter-repo） | ⏳ |
+| 1 | `git rm --cached` 停止跟踪 | ✅（2026-07-24，仅本仓库；远端未推，H2 文件本身保留在磁盘） |
+| 2 | 清理历史（filter-branch 或 filter-repo） | ⏳ 待用户授权 |
 | 3 | 向用户说明强制推送风险并确认 | ⏳ |
 | 4 | 强制推送到 GitHub + Gitee | ⏳ |
 | 5 | 提醒用户轮换 MiniMax API Key | ⏳ |
