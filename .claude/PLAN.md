@@ -62,3 +62,53 @@
 | 6 | 编译修复（import + static 问题） | ✅ |
 | 7 | 前端 key form 加协议下拉框 | ✅ |
 | 8 | 构建验证 | ✅ |
+
+---
+
+## 第 9 次对话（2026-07-23）— 🚧 进行中
+
+### 目标
+清理已提交到 Git 历史的敏感数据：`data/myai.mv.db` 从历史中彻底移除，停止跟踪。
+
+### 背景
+- `d52e520`（优化）提交中 `data/myai.mv.db` 包含 1 个 MiniMax API Key
+- 已推送到 GitHub + Gitee
+- `data/` 已在 `.gitignore` 中但文件仍被跟踪
+
+### 子步骤
+
+| # | 步骤 | 状态 |
+| --- | --- | --- |
+| 1 | `git rm --cached` 停止跟踪 | 🚧 进行中 |
+| 2 | 清理历史（filter-branch 或 filter-repo） | ⏳ |
+| 3 | 向用户说明强制推送风险并确认 | ⏳ |
+| 4 | 强制推送到 GitHub + Gitee | ⏳ |
+| 5 | 提醒用户轮换 MiniMax API Key | ⏳ |
+
+---
+
+## 第 10 次对话（2026-07-24）— ✅ 已完成（2026-07-24）
+
+### 目标
+1. 重写 `.claude/CLAUDE.md`，补全事实（Anthropic 协议、`application-my.yml`、JWT 认证），精简与 `~/.claude/CLAUDE.md` 重复的开发实践章节。
+2. 用 `/grill-with-docs` 评估"引入微信"需求并落 ADR。
+
+### 关键决策
+- **CLAUDE.md 结构**：删去与用户级重复的"沟通方式/修改原则/仓库安全/验证原则"展开，仅顶部引用 + 第 7 节"仓库特有验证补充"。
+- **ProviderProtocol 表述**：补 `ANTHROPIC` 第三分支；`user_api_key.protocol` 列为可选覆盖。
+- **微信需求**：用户表达"在群里 @机器人" → 调研发现企业微信自建应用回调 API **不支持**群聊 @bot → 仅"会话内容存档"或第三方 SCRM 能做到 → 个人开发者画像下不可行 → **决定暂不开发**。
+
+### 子步骤
+
+| # | 步骤 | 状态 | 关键文件 |
+| --- | --- | --- | --- |
+| 1 | 重写 `.claude/CLAUDE.md` | ✅ | `.claude/CLAUDE.md`（约 9 KB，13 节精简） |
+| 2 | 装 grilling + domain-modeling skill | ✅ | `~/.agents/skills/`（symlinked） |
+| 3 | 调研企业微信群 @ 机器人能力 | ✅ | 引用 3 条官方文档 |
+| 4 | 写 ADR 0001 中文版 | ✅ | `docs/adr/0001-defer-wechat-integration.md` |
+| 5 | 写 ADR 0001 英文版 | ✅ | `docs/adr/0001-defer-wechat-integration.en.md` |
+| 6 | CLAUDE.md 第 10 节补 ADR 位置 + 命名约定 | ✅ | `.claude/CLAUDE.md` |
+
+### 显式不做（本期）
+- 不引入任何微信 SDK；`pom.xml` 不变。
+- 不写 `CONTEXT.md`：本次未产出 MyAi 项目独有的领域术语（"微信机器人"是外部平台能力，不是 MyAi 术语）。
