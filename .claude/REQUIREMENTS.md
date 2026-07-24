@@ -17,6 +17,11 @@
   - 证据：`SecurityConfig.filterChain`。
 - 来源：2026-07-23 用户需求 + 代码。
 
+### 1.0.1 微信扫码登录（已设计，未实现 — 2026-07-24）
+- 设计定稿见 ADR `docs/adr/0002-wechat-scan-login.md`：扫码登录与密码登录并存；未绑定微信首次扫码自动注册（`email` / `password_hash` 为 NULL）；`user` 表加 `wechat_open_id`（唯一）/ `wechat_union_id`；已登录用户可在设置页扫码绑定。
+- 落地前提：微信开放平台组织资质认证（个人不可办，300 元/年）+ ICP 备案域名；穿透调试域名无法备案，实现前需复核。
+- 来源：2026-07-24 `/grill-me` 会话决策；**代码中尚无任何实现**，证据文件尚不存在。
+
 ### 1.1 多用户管理
 - 用户可创建、查询、删除。
   - 证据：`UserController` 提供 `GET /api/users`、`GET /api/users/{id}`、`POST /api/users`、`DELETE /api/users/{id}`。
@@ -115,3 +120,4 @@
 ## 4. 变更追踪
 
 - `2026-07-23`：初次从 README + 源码反推成文（与项目级 `CLAUDE.md` 同步生成）。
+- `2026-07-24`：新增 1.0.1「微信扫码登录（已设计，未实现）」，对应 ADR 0002。

@@ -1,5 +1,7 @@
 # Defer WeChat Integration
 
+> Related decision: [0002](0002-wechat-scan-login.md) (WeChat scan-to-login) is an independent authentication decision — this document defers the *chat channel*, not *login*. The consequence below that "the `User` model has no WeChat `openId` mapping" holds only within this decision's scope; 0002 designs `openId` columns on `user` for login.
+
 We considered introducing WeChat as a chat channel for MyAi and decided **not to develop it now** (2026-07-24). Investigation showed the most natural interpretation — "在企业微信群里 @ 机器人" — is not supported by the official self-built-app callback API; the only official paths that can read group messages require paid "会话内容存档" qualification, and the alternative 公众号 path is single-chat only with no group support. We prioritize compliance and individual-developer feasibility over feature breadth.
 
 > Chinese version: `0001-defer-wechat-integration.md`.

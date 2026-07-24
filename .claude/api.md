@@ -37,6 +37,8 @@ Authorization: Bearer <token>
 - 注册 / 登录成功后获得 `token`（HS256，默认 7 天有效）。
 - 4010 返回不等于前端被动断开——前端在 `api()` 包装函数里检测到 `code === 4010` 后自动清空 token 并弹出登录卡片。
 
+> 规划（未实现）：微信扫码登录的后端回调接口（GET，302 回前端、token 走 URL fragment）见 ADR `docs/adr/0002-wechat-scan-login.md`；实现后需在本节补充端点并把回调路径加入 `SecurityConfig` 白名单。
+
 ### Key 脱敏
 
 `/api/users/{userId}/keys*` 系列响应里 `apiKey` 不会出现，只暴露两个字段：
