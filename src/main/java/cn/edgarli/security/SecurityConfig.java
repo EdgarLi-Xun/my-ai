@@ -1,5 +1,6 @@
 package cn.edgarli.security;
 
+import jakarta.servlet.DispatcherType;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
 import org.springframework.http.HttpMethod;
@@ -39,6 +40,8 @@ public class SecurityConfig {
                         .authenticationEntryPoint(authenticationEntryPoint)
                         .accessDeniedHandler(accessDeniedHandler))
                 .authorizeHttpRequests(auth -> auth
+                        // SSE 异步派发时跳过二次校验（JWT 已在首次派发时验证过）
+                        .dispatcherTypeMatchers(DispatcherType.ASYNC).permitAll()
                         // 公开端点
                         .requestMatchers("/api/auth/**").permitAll()
                         .requestMatchers(HttpMethod.GET, "/api/providers").permitAll()
