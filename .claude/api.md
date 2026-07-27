@@ -38,6 +38,8 @@ Authorization: Bearer <token>
 - 4010 返回不等于前端被动断开——前端在 `api()` 包装函数里检测到 `code === 4010` 后自动清空 token 并弹出登录卡片。
 
 > 规划（未实现）：微信扫码登录的后端回调接口（GET，302 回前端、token 走 URL fragment）见 ADR `docs/adr/0002-wechat-scan-login.md`；实现后需在本节补充端点并把回调路径加入 `SecurityConfig` 白名单。
+>
+> 规划（未实现）：`POST /api/chat` 会被替换为 11 个新端点（`/api/conversations/*`、`/api/messages/*`），实现后本节 §4 整段会删除并改写到 §5；详见 ADR `docs/adr/0003-conversations-and-messages.md`。
 
 ### Key 脱敏
 
@@ -218,5 +220,54 @@ Authorization: Bearer <token>
 
 - `OPENAI_COMPATIBLE` → 走 `OpenAiChatModel.builder().options(...).build()`。
 - `OLLAMA` → 走 `OllamaChatModel.builder().ollamaApi(...).options(...).build()`。
+- `ANTHROPIC` → 走 `AnthropicChatModel.builder().options(...).build()`（CLAUDE.md 第 2 节列出，`api.md` 历史版本未含此项）。
 
 修改默认 Key 配置后，**下一次**聊天请求立刻生效，不需要重启。
+
+> ⚠️ 本节将被 ADR 0003 替换。规划中，`POST /api/chat` 会被替换为下述 11 个端点；当前 `POST /api/chat` 仍然是唯一可用的聊天入口。
+
+---
+
+## 5. 对话与消息 `/api/conversations` `/api/messages`（规划，未实现 — 2026-07-27）
+
+> 设计定稿见 ADR `docs/adr/0003-conversations-and-messages.md`。本节是设计快照，**代码中尚无任何端点**。
+
+### 5.1 对话（Conversation）
+
+| 方法 | 路径 | 作用 | 备注 |
+| --- | --- | --- | --- |
+| POST | `/api/conversations` | 创建空 conversation | title = "新对话 N"（N = 当前用户未删数 + 1） |
+| GET | `/api/conversations?include_deleted=false` | 列当前用户的 conversations | 侧栏用，按 `updated_at DESC` |
+| PATCH | `/api/conversations/{id}` | 改 title | 设 `title_manually_set = TRUE` |
+| DELETE | `/api/conversations/{id}` | 软删 | `deleted_at = NOW()` |
+| POST | `/api/conversations/{id}/restore` | 恢复 | `deleted_at = NULL` |
+| DELETE | `/api/conversations/{id}/permanent` | 硬删 | CASCADE message |
+
+### 5.2 消息（Message）
+
+| 方法 | 路径 | 作用 | 备注 |
+| --- | --- | --- | --- |
+| GET | `/api/conversations/{id}/messages?include_orphaned=false` | 列当前对话的未作废消息 | 按 `created_at` |
+| POST | `/api/conversations/{id}/messages` | 发新消息 | **流式 SSE 返回** AI 回复 |
+| PATCH | `/api/messages/{id}` | 改 USER 消息内容 | 把该消息之后所有消息标 `is_orphaned = TRUE` |
+| POST | `/api/messages/{id}/regenerate` | 重新生成 ASSISTANT 消息 | 基于历史重新调 AI |
+
+### 5.3 错误码新增
+
+| code | 含义 |
+| --- | --- |
+| 4030 | 默认 Key 不可用（NULL / disabled / 配置无效），UI 引导到 Key 管理 |
+| 4031 | 对话不存在 / 已删 |
+| 4032 | 消息不存在 / 不属于当前用户 |
+| 4033 | 编辑消息时该消息不是 USER 角色 |
+| 4034 | 重新生成时该消息不是 ASSISTANT 角色 |
+
+### 5.4 行为约束
+
+- **AI 上下文**：调 AI 前 fetch `WHERE conversation_id = ? AND is_orphaned = FALSE` 全部消息拼成 prompt；不同对话互不干扰。
+- **不绑 Key**：`conversation` 表不存 `key_id`，每次调 AI 用 `User.default_key_id`（"假连贯"已知接受的代价）。
+- **SYSTEM 角色**：`message.role` 约束 `'USER' | 'ASSISTANT' | 'SYSTEM'`；v1 后端不主动注入 SYSTEM 消息，列是给将来用的。
+- **流式 + 续传**：`POST /api/conversations/{id}/messages` 返回 `text/event-stream`；用户点"停止" → `AbortController` 关闭流 → 已生成 token 全部丢弃。续传实现细节留到实施期。
+- **多 tab 同步**：浏览器 `BroadcastChannel('my-ai-conversations')` 广播事件，纯客户端跨 tab 通信。
+- **软删清理**：Spring `@Scheduled(cron = "0 3 * * * *")` 每天扫 `deleted_at < NOW() - 30 days` 的对话 hard delete；retention 走 `@ConfigurationProperties: my-ai.trash.retention-days`，默认 30。
+- **Markdown 渲染**：前端 `marked` + `highlight.js` + `KaTeX` + `DOMPurify`；`message.content` 存纯文本 Markdown 源，后端不做 HTML 转换。

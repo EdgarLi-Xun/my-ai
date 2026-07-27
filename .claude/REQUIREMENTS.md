@@ -75,6 +75,18 @@
   - 证据：`UserApiKeyService.mask`。
 - 来源：README "Key 响应脱敏" + 代码。
 
+### 1.8 对话与消息（已设计，未实现 — 2026-07-27）
+- 设计定稿见 ADR `docs/adr/0003-conversations-and-messages.md`：引入 `conversation` 与 `message` 两表；用户可建多个对话，每个对话有独立标题 / 创建时间 / 消息流；AI 看得见同对话内全部未作废消息；用户可编辑 USER 消息 / 重新生成 ASSISTANT 消息；流式输出；多 tab 通过 `BroadcastChannel` 实时同步；Markdown + 代码高亮 + 公式 + 图片渲染。
+- 落地形式：
+  - 后端：11 个新端点替换 `POST /api/chat`；`@Scheduled` 任务每天清理 30 天前的软删对话；`title_manually_set` / `is_orphaned` / `deleted_at` 等软标记字段。
+  - 前端：App.vue 加左侧栏（用户下拉 / 对话列表 / 已删除折叠区）；`marked` + `highlight.js` + `KaTeX` + `DOMPurify` 渲染；`localStorage` 记忆上次激活的对话。
+  - 安全：`Default Key 不可用` 抛 4030，前端引导到 Key 管理。
+- 落地后会带来的事实变化：
+  - 旧 `POST /api/chat` 被删除（破坏性变更）；
+  - 1.4「聊天走用户默认 Key」仍成立，但实现路径改为"调 AI 前 fetch 全部 `is_orphaned=FALSE` 消息拼 context"；
+  - 3 「流式输出 / SSE」从「推测无」变为「已实现」。
+- 来源：2026-07-27 `/grill-with-docs` 19 题决策；**代码中尚无任何实现**。
+
 ## 2. 非功能需求 / 约束
 
 ### 2.1 数据持久化
@@ -121,3 +133,4 @@
 
 - `2026-07-23`：初次从 README + 源码反推成文（与项目级 `CLAUDE.md` 同步生成）。
 - `2026-07-24`：新增 1.0.1「微信扫码登录（已设计，未实现）」，对应 ADR 0002。
+- `2026-07-27`：新增 1.8「对话与消息（已设计，未实现）」，对应 ADR 0003；19 题 grilling 决策已落 PLAN.md 第 12 次对话。

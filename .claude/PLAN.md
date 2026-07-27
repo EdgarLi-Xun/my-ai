@@ -147,3 +147,52 @@
 - 不写任何业务代码（后端回调接口、前端二维码、schema 迁移均留待实现期）。
 - 不申请微信资质、不配置穿透域名。
 
+---
+
+## 第 12 次对话（2026-07-27）— ✅ 已完成（2026-07-27）
+
+### 目标
+用 `/grill-with-docs` 拷问「记录聊天记录 + 新开不同聊天窗口」需求，落到数据模型、API、UI、共识记录 4 份产出，**本轮只写设计文档，不写业务代码**。
+
+### 关键决策（grilling 19 题确认）
+
+| # | 决策 | 落地形式 |
+| --- | --- | --- |
+| Q1=A | ChatGPT 式侧栏 | App.vue 左侧栏 UI |
+| Q2=A | AI 看得见同对话内全部历史 | 调 AI 前 fetch `is_orphaned=FALSE` 消息拼 context |
+| Q3=C | 不绑 Key | 不存 `key_id`，每次用 `User.default_key_id` |
+| Q4=A | 可编辑 + 重新生成 | `is_orphaned` flag |
+| Q5=D | AI 自动起标题 + 可编辑 | `title_manually_set` flag |
+| Q6=B | 软删 | `deleted_at` 列 + restore 端点 |
+| Q7=C | 记忆上次激活 | localStorage `last_active_conversation_id` |
+| Q8=B | localStorage | 不监听 storage event |
+| Q9=A | 默认 Key 缺失报错 | 4030 + UI 引导 |
+| Q10=A | 已删对话折叠区 | 侧栏底部 |
+| Q11=A+D | 透传错误 + 触发条件 | 触发 = 用户主动反馈"对话过长" |
+| Q12=A | `updated_at DESC` | message 新增时 update conversation |
+| Q13=B | SYSTEM 角色 | `message.role` 含 `SYSTEM` |
+| Q14=B | 30 天后 hard delete | `@Scheduled` + `my-ai.trash.retention-days=30` |
+| Q15=C | 流式 + 续传 | SSE，续传实现实施时定 |
+| Q16=A | 直接替换 `/api/chat` | 删旧端点 |
+| Q17=A | 侧栏顶部用户下拉 | App.vue 布局 |
+| Q18=B | 多 tab 实时同步 | `BroadcastChannel` |
+| Q19=D | Markdown + 高亮 + 公式 + 图片 | `marked` + `highlight.js` + `KaTeX` + `DOMPurify` |
+
+### 子步骤
+
+| # | 步骤 | 状态 | 关键文件 |
+| --- | --- | --- | --- |
+| 1 | grilling 拷问 19 题，确认全部决策 | ✅ | 本会话 |
+| 2 | 写设计摘要（含数据模型 / API / UI / 共识 / 待办） | ✅ | 本会话输出 |
+| 3 | 写 ADR 0003 中文版 | ✅ | `docs/adr/0003-conversations-and-messages.md` |
+| 4 | 写 ADR 0003 英文版 | ✅ | `docs/adr/0003-conversations-and-messages.en.md` |
+| 5 | PLAN 收尾标记 | ✅ | 本文件 |
+| 6 | 更新 `.claude/api.md`（加入新端点） | ✅ | `.claude/api.md` |
+| 7 | 更新 `.claude/REQUIREMENTS.md`（加入新需求） | ✅ | `.claude/REQUIREMENTS.md` |
+
+### 显式不做（本期）
+- 不写任何业务代码（schema 迁移、entity、service、controller、App.vue、BroadcastChannel、Markdown 渲染、`@Scheduled` 等均留待实现期）。
+- 不实施 Q15=C 续传细节（实施时定候选三选一：server buffer / 客户端缓存 / 新 AI 调用跳过已显示）。
+- 不暴露 SYSTEM 消息的 UI 输入（v1 只在 message.role 列预留，业务上后端不主动注入）。
+- 不实现 Q19=D 的图片上传（v1 图片渲染只为"用户贴图链接"服务）。
+
