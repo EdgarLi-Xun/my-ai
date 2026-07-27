@@ -1,6 +1,6 @@
 <template>
   <div class="app">
-    <!-- 登录遮罩 -->
+    <!-- 登录 / 注册遮罩 -->
     <div v-if="!token" class="auth-overlay">
       <div class="auth-card">
         <h2>{{ authMode === 'login' ? '登录' : '注册' }}</h2>
@@ -33,13 +33,15 @@
             {{ authMode === 'login' ? '没有账号？去注册' : '已有账号？去登录' }}
           </button>
         </div>
-        <div v-if="authError" class="panel-error" @click="authError = ''">{{ authError }}（点击关闭）</div>
+        <div v-if="authError" class="panel-error" @click="authError = ''">
+          {{ authError }}（点击关闭）
+        </div>
       </div>
     </div>
 
-    <!-- 顶栏：当前用户、默认 Key 状态、面板切换 -->
+    <!-- 顶栏 -->
     <header class="header">
-      <div>
+      <div class="brand">
         <h1>MyAi Chat</h1>
         <p v-if="defaultKey" class="current-key">
           默认 Key：{{ defaultKey.name }} · {{ defaultKey.provider.toUpperCase() }} · {{ defaultKey.modelName }}
@@ -47,32 +49,119 @@
         <p v-else class="current-key warning">当前用户没有可用的默认 Key</p>
       </div>
       <div class="controls">
-        <span v-if="currentUser" class="user-badge">
-          👤 {{ currentUser.name }}
-        </span>
-        <button class="secondary" @click="showManager = !showManager">
-          {{ showManager ? '收起管理' : '管理 Key' }}
-        </button>
-        <button class="secondary" @click="clear" :disabled="loading || messages.length === 0">
-          清空
+        <span v-if="currentUser" class="user-badge">👤 {{ currentUser.name }}</span>
+        <button class="secondary" @click="showKeyDrawer = !showKeyDrawer">
+          {{ showKeyDrawer ? '收起管理' : '管理 Key' }}
         </button>
         <button class="secondary" @click="logout">退出</button>
       </div>
     </header>
 
     <div class="workspace">
-      <!-- Key 管理面板：列出/新增/编辑/删除/设默认 Key -->
-      <aside v-if="showManager" class="manager">
+      <!-- 左侧对话栏 -->
+      <aside class="sidebar">
+        <button class="primary new-conv" @click="createConversation" :disabled="!defaultKey">
+          + 新对话
+        </button>
+        <div v-if="activeConversations.length === 0" class="sidebar-empty">
+          还没有对话
+        </div>
+        <ul class="conv-list">
+          <li
+            v-for="conv in activeConversations"
+            :key="conv.id"
+            :class="['conv-item', { active: conv.id === activeConversationId }]"
+            @click="selectConversation(conv.id)"
+          >
+            <div class="conv-title">{{ conv.title || '新对话' }}</div>
+            <div class="conv-actions">
+              <button class="text-button danger" @click.stop="deleteConversation(conv)">删</button>
+            </div>
+          </li>
+        </ul>
+        <div v-if="deletedConversations.length > 0" class="trash-section">
+          <button class="text-button" @click="showTrash = !showTrash">
+            {{ showTrash ? '收起' : '展开' }} 已删除 ({{ deletedConversations.length }})
+          </button>
+          <ul v-if="showTrash" class="conv-list deleted">
+            <li v-for="conv in deletedConversations" :key="conv.id" class="conv-item deleted">
+              <div class="conv-title">{{ conv.title || '新对话' }}</div>
+              <div class="conv-actions">
+                <button class="text-button" @click="restoreConversation(conv)">恢复</button>
+                <button class="text-button danger" @click="permanentlyDelete(conv)">永久删</button>
+              </div>
+            </li>
+          </ul>
+        </div>
+      </aside>
+
+      <!-- 主聊天区 -->
+      <section class="chat">
+        <div v-if="activeConversationId == null" class="empty">
+          <template v-if="!defaultKey">请先设置一个启用的默认 Key</template>
+          <template v-else>选择左侧对话，或点击"新对话"开始聊天 👋</template>
+        </div>
+
+        <main v-else class="messages" ref="messagesRef">
+          <div v-if="visibleMessages.length === 0 && !streaming" class="empty">
+            <template v-if="!defaultKey">请先设置一个启用的默认 Key</template>
+            <template v-else>开始你的第一条消息吧</template>
+          </div>
+
+          <article
+            v-for="m in visibleMessages"
+            :key="m.id ?? `pending-${m.localId}`"
+            :class="['message', m.role.toLowerCase(), { orphaned: m.isOrphaned }]"
+          >
+            <div v-if="editingId === m.id" class="bubble edit-bubble">
+              <textarea v-model="editingContent" rows="3"></textarea>
+              <div class="edit-actions">
+                <button class="primary small" @click="commitEdit(m)">保存</button>
+                <button class="text-button" @click="cancelEdit">取消</button>
+              </div>
+            </div>
+            <div v-else class="bubble" v-html="renderMarkdown(m.content)"></div>
+            <div class="meta">
+              <span v-if="!m.isOrphaned && m.role === 'USER' && editingId !== m.id"
+                    class="meta-action" @click="startEdit(m)">编辑</span>
+              <span v-if="!m.isOrphaned && m.role === 'ASSISTANT' && !streaming"
+                    class="meta-action" @click="regenerateMessage(m)">重新生成</span>
+              <span v-if="m.isOrphaned" class="orphan-tag">已作废</span>
+              <span class="meta-text">{{ m.role === 'USER' ? '我' : 'AI' }}</span>
+            </div>
+          </article>
+
+          <div v-if="streaming" class="message assistant streaming">
+            <div class="bubble" v-html="renderMarkdown(streamingContent)"></div>
+            <div class="meta">{{ defaultKey ? `${defaultKey.name} · ${defaultKey.provider.toUpperCase()}` : 'AI' }}</div>
+          </div>
+        </main>
+
+        <div v-if="error" class="error" @click="error = ''">
+          {{ error }}（点击关闭）
+        </div>
+
+        <footer v-if="activeConversationId != null" class="composer">
+          <textarea
+            v-model="input"
+            @keydown.enter.exact.prevent="send"
+            :disabled="streaming || !defaultKey"
+            :placeholder="defaultKey ? '输入消息，回车发送，Shift+回车换行' : '请先设置默认 Key'"
+            rows="1"
+            ref="inputRef"
+          ></textarea>
+          <button v-if="!streaming" class="send" @click="send" :disabled="!canSend">发送</button>
+          <button v-else class="send stop" @click="stop">停止</button>
+        </footer>
+      </section>
+
+      <!-- 右侧 Key 管理 Drawer -->
+      <aside v-if="showKeyDrawer" class="key-drawer">
         <section class="panel-section keys-section">
           <div class="section-title">
             <h2>Key 配置</h2>
-            <button
-              class="secondary small"
-              :disabled="configLoading"
-              @click="startCreateKey"
-            >新增 Key</button>
+            <button class="secondary small" :disabled="configLoading" @click="startCreateKey">新增 Key</button>
           </div>
-
           <div v-if="keys.length === 0" class="panel-empty">还没有 Key，请新增一个</div>
           <div v-else class="key-list">
             <article v-for="key in keys" :key="key.id" class="key-card">
@@ -83,7 +172,9 @@
                   {{ key.enabled ? '启用' : '禁用' }}
                 </span>
               </div>
-              <div class="key-meta">{{ key.provider.toUpperCase() }} · {{ key.protocol || '默认' }} · {{ key.modelName }}</div>
+              <div class="key-meta">
+                {{ key.provider.toUpperCase() }} · {{ key.protocol || '默认' }} · {{ key.modelName }}
+              </div>
               <div class="key-meta">{{ key.maskedApiKey || '无需 API Key' }}</div>
               <div class="key-actions">
                 <button class="text-button" @click="startEditKey(key)">编辑</button>
@@ -104,20 +195,15 @@
             <button class="text-button" @click="cancelKeyForm">取消</button>
           </div>
           <form class="key-form" @submit.prevent="saveKey">
-            <label>
-              名称
-              <input v-model="keyForm.name" placeholder="例如：工作 OpenAI" :disabled="configLoading" />
-            </label>
-            <label>
-              Provider
+            <label>名称 <input v-model="keyForm.name" :disabled="configLoading" /></label>
+            <label>Provider
               <select v-model="keyForm.provider" :disabled="configLoading" @change="applyProviderDefaults">
                 <option v-for="provider in providers" :key="provider.name" :value="provider.name">
                   {{ provider.displayName }}
                 </option>
               </select>
             </label>
-            <label>
-              协议
+            <label>协议
               <select v-model="keyForm.protocol" :disabled="configLoading">
                 <option value="">默认（Provider 决定）</option>
                 <option value="OPENAI_COMPATIBLE">OpenAI 兼容</option>
@@ -125,32 +211,21 @@
                 <option value="OLLAMA">Ollama</option>
               </select>
             </label>
-            <label>
-              API Key
-              <input
-                v-model="keyForm.apiKey"
-                type="password"
-                autocomplete="new-password"
-                :placeholder="editingKeyId ? '留空表示保留原 Key' : keyForm.provider === 'openai' ? 'OpenAI 必填' : 'Ollama 可留空'"
-                :disabled="configLoading"
-              />
+            <label>API Key
+              <input v-model="keyForm.apiKey" type="password" autocomplete="new-password"
+                :placeholder="editingKeyId ? '留空表示保留原 Key' : 'Ollama 可留空'"
+                :disabled="configLoading" />
             </label>
-            <label>
-              Base URL
-              <input v-model="keyForm.baseUrl" placeholder="http(s)://..." :disabled="configLoading" />
-            </label>
-            <label>
-              模型
-              <input v-model="keyForm.modelName" placeholder="模型名称" :disabled="configLoading" />
-            </label>
+            <label>Base URL <input v-model="keyForm.baseUrl" :disabled="configLoading" /></label>
+            <label>模型 <input v-model="keyForm.modelName" :disabled="configLoading" /></label>
             <label class="checkbox-label">
               <input v-model="keyForm.enabled" type="checkbox" :disabled="configLoading" />
               启用该 Key
             </label>
-            <button
-              class="primary"
-              :disabled="configLoading || !keyForm.name.trim() || !keyForm.baseUrl.trim() || !keyForm.modelName.trim()"
-            >{{ configLoading ? '保存中...' : '保存配置' }}</button>
+            <button class="primary"
+              :disabled="configLoading || !keyForm.name.trim() || !keyForm.baseUrl.trim() || !keyForm.modelName.trim()">
+              {{ configLoading ? '保存中...' : '保存配置' }}
+            </button>
           </form>
         </section>
 
@@ -158,57 +233,20 @@
           {{ configError }}（点击关闭）
         </div>
       </aside>
-
-      <!-- 聊天区：消息列表 + 输入框，发送至 /api/chat -->
-      <section class="chat">
-        <main class="messages" ref="messagesRef">
-          <div v-if="messages.length === 0 && !loading" class="empty">
-            <template v-if="!defaultKey">请先设置一个启用的默认 Key</template>
-            <template v-else>使用 {{ defaultKey.name }} 开始聊天吧 👋</template>
-          </div>
-
-          <div v-for="(message, index) in messages" :key="index" :class="['message', message.role]">
-            <div class="bubble">{{ message.content }}</div>
-            <div class="meta">{{ message.role === 'user' ? '我' : assistantLabel }}</div>
-          </div>
-
-          <div v-if="loading" class="message assistant">
-            <div class="bubble loading">
-              <span class="dot"></span><span class="dot"></span><span class="dot"></span>
-            </div>
-            <div class="meta">{{ assistantLabel }}</div>
-          </div>
-        </main>
-
-        <div v-if="error" class="error" @click="error = ''">{{ error }}（点击关闭）</div>
-
-        <footer class="composer">
-          <textarea
-            v-model="input"
-            @keydown.enter.exact.prevent="send"
-            :disabled="loading || !defaultKey"
-            :placeholder="defaultKey ? '输入消息，回车发送，Shift+回车换行' : '请先设置默认 Key'"
-            rows="1"
-            ref="inputRef"
-          />
-          <button class="send" @click="send" :disabled="!canSend">发送</button>
-        </footer>
-      </section>
     </div>
   </div>
 </template>
 
 <script setup>
-/**
- * MyAi 前端单文件组件：登录/注册遮罩 + 顶栏 + Key 管理面板 + 聊天区。
- * 所有 API 调用经下方 `api` 封装统一携带 `Authorization: Bearer <token>`；
- * JWT 仅存在组件 state（`token`），刷新即失效——会话级，不持久化。
- */
-import { computed, nextTick, onMounted, ref, watch } from 'vue'
+import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue'
+import { renderMarkdown } from './lib/markdown.js'
+import { consumeSSE } from './lib/sse.js'
 
 const TOKEN_KEY = 'myai.token'
+const ACTIVE_CONV_KEY = 'myai.last_active_conversation_id'
+const BROADCAST_CHANNEL = 'my-ai-conversations'
 
-// --- 登录态 ---
+// ============ 登录态 ============
 const token = ref(null)
 const currentUser = ref(null)
 const authMode = ref('login')
@@ -226,77 +264,50 @@ const canAuth = computed(() => {
   return true
 })
 
-// --- 应用状态 ---
+// ============ 对话 ============
+const conversations = ref([])
+const deletedConversations = ref([])
+const activeConversationId = ref(null)
+const activeMessages = ref([])
+const streaming = ref(false)
+const streamingContent = ref('')
+const abortCtl = ref(null)
+const channel = ref(null)
+const showTrash = ref(false)
+const editingId = ref(null)
+const editingContent = ref('')
+
+const input = ref('')
+const messagesRef = ref(null)
+const inputRef = ref(null)
+const error = ref('')
+
+// ============ Key 管理 ============
 const keys = ref([])
 const providers = ref([])
-const showManager = ref(true)
+const showKeyDrawer = ref(false)
 const showKeyForm = ref(false)
 const editingKeyId = ref(null)
 const keyForm = ref(newKeyForm())
 const configLoading = ref(false)
 const configError = ref('')
 
-const input = ref('')
-const messages = ref([])
-const loading = ref(false)
-const error = ref('')
-const messagesRef = ref(null)
-const inputRef = ref(null)
+const defaultKey = computed(() => keys.value.find(k => k.defaultKey && k.enabled) || null)
+const activeConversations = computed(() => conversations.value)
+const canSend = computed(() => Boolean(defaultKey.value && input.value.trim() && !streaming.value))
+const visibleMessages = computed(() =>
+  activeMessages.value.filter(m => !m.isOrphaned)
+)
 
-const defaultKey = computed(() => keys.value.find(key => key.defaultKey && key.enabled) || null)
-const assistantLabel = computed(() => defaultKey.value
-  ? `${defaultKey.value.name} · ${defaultKey.value.provider.toUpperCase()}`
-  : 'AI')
-const canSend = computed(() => Boolean(defaultKey.value && input.value.trim() && !loading.value))
-
-watch(messages, scrollToBottom, { deep: true })
-watch(loading, value => { if (!value) inputRef.value?.focus() })
-
-onMounted(async () => {
-  await loadProviders()
-  const saved = localStorage.getItem(TOKEN_KEY)
-  if (saved) {
-    token.value = saved
-    try {
-      currentUser.value = await api('/api/auth/me')
-      await loadKeys()
-    } catch {
-      token.value = null
-      localStorage.removeItem(TOKEN_KEY)
-    }
-  }
-})
-
-function newKeyForm(providerName) {
-  const fallback = providers.value[0] || { name: 'ollama', defaultBaseUrl: 'http://localhost:11434', defaultModel: 'qwen2.5:7b' }
-  const target = providerName
-    ? providers.value.find(item => item.name === providerName) || fallback
-    : fallback
-  return {
-    name: '',
-    provider: target.name || 'ollama',
-    protocol: '',
-    apiKey: '',
-    baseUrl: target.defaultBaseUrl || 'http://localhost:11434',
-    modelName: target.defaultModel || 'qwen2.5:7b',
-    enabled: true
-  }
-}
-
+// ============ api 封装 ============
 async function api(url, options = {}) {
   const headers = { ...(options.headers || {}) }
-  if (token.value) {
-    headers['Authorization'] = 'Bearer ' + token.value
-  }
+  if (token.value) headers['Authorization'] = 'Bearer ' + token.value
   const response = await fetch(url, { ...options, headers })
   const text = await response.text()
   let body = null
   if (text) {
-    try {
-      body = JSON.parse(text)
-    } catch {
-      body = null
-    }
+    try { body = JSON.parse(text) } catch { body = null }
   }
   if (body && typeof body === 'object' && 'code' in body && 'message' in body) {
     if (body.code === 4010) {
@@ -310,13 +321,54 @@ async function api(url, options = {}) {
     }
     return body.data
   }
-  if (!response.ok) {
-    throw new Error(text || `HTTP ${response.status}`)
-  }
+  if (!response.ok) throw new Error(text || `HTTP ${response.status}`)
   return body
 }
 
-// --- 认证 ---
+// ============ 生命周期 ============
+onMounted(async () => {
+  await loadProviders()
+  const saved = localStorage.getItem(TOKEN_KEY)
+  if (saved) {
+    token.value = saved
+    try {
+      currentUser.value = await api('/api/auth/me')
+      await loadKeys()
+      await loadConversations()
+      setupChannel()
+      const lastId = localStorage.getItem(ACTIVE_CONV_KEY)
+      if (lastId) await selectConversation(Number(lastId))
+    } catch {
+      token.value = null
+      localStorage.removeItem(TOKEN_KEY)
+    }
+  }
+})
+
+onBeforeUnmount(() => {
+  if (channel.value) channel.value.close()
+  if (abortCtl.value) abortCtl.value.abort()
+})
+
+function setupChannel() {
+  if (typeof BroadcastChannel === 'undefined') return
+  channel.value = new BroadcastChannel(BROADCAST_CHANNEL)
+  channel.value.addEventListener('message', async e => {
+    const { type, conversationId } = e.data || {}
+    if (type === 'conversation:created' || type === 'conversation:updated'
+        || type === 'conversation:deleted') {
+      await loadConversations()
+    } else if (type === 'message:created' && conversationId === activeConversationId.value) {
+      await loadMessages()
+    }
+  })
+}
+
+function broadcast(type, payload = {}) {
+  if (channel.value) channel.value.postMessage({ type, ...payload })
+}
+
+// ============ 认证 ============
 function toggleAuthMode() {
   authMode.value = authMode.value === 'login' ? 'register' : 'login'
   authError.value = ''
@@ -341,6 +393,8 @@ async function doAuth() {
     auth.value = { name: '', email: '', password: '' }
     await loadProviders()
     await loadKeys()
+    await loadConversations()
+    setupChannel()
   } catch (e) {
     authError.value = (authMode.value === 'login' ? '登录' : '注册') + '失败：' + (e.message || String(e))
   } finally {
@@ -352,31 +406,35 @@ function logout() {
   token.value = null
   currentUser.value = null
   localStorage.removeItem(TOKEN_KEY)
+  localStorage.removeItem(ACTIVE_CONV_KEY)
+  if (channel.value) { channel.value.close(); channel.value = null }
   keys.value = []
-  messages.value = []
-  error.value = ''
-  showKeyForm.value = false
+  conversations.value = []
+  deletedConversations.value = []
+  activeMessages.value = []
+  activeConversationId.value = null
 }
 
-// --- Provider ---
+// ============ Provider / Key ============
 async function loadProviders() {
-  try {
-    providers.value = await api('/api/providers')
-  } catch {
-    providers.value = []
-  }
+  try { providers.value = await api('/api/providers') } catch { providers.value = [] }
 }
 
-// --- Key ---
 async function loadKeys() {
-  if (!currentUser.value) {
-    keys.value = []
-    return
-  }
-  try {
-    keys.value = await api(`/api/users/${currentUser.value.id}/keys`)
-  } catch {
-    keys.value = []
+  if (!currentUser.value) { keys.value = []; return }
+  try { keys.value = await api(`/api/users/${currentUser.value.id}/keys`) } catch { keys.value = [] }
+}
+
+function newKeyForm() {
+  const fallback = providers.value[0] || { name: 'ollama', defaultBaseUrl: 'http://localhost:11434', defaultModel: 'qwen2.5:7b' }
+  return {
+    name: '',
+    provider: fallback.name || 'ollama',
+    protocol: '',
+    apiKey: '',
+    baseUrl: fallback.defaultBaseUrl || 'http://localhost:11434',
+    modelName: fallback.defaultModel || 'qwen2.5:7b',
+    enabled: true
   }
 }
 
@@ -407,25 +465,21 @@ function cancelKeyForm() {
 }
 
 function applyProviderDefaults() {
-  const providerName = (keyForm.value.provider || '').toString()
-  if (!providerName) return
-  const target = providers.value.find(item => item.name === providerName)
+  const target = providers.value.find(p => p.name === keyForm.value.provider)
   if (!target) return
   keyForm.value.baseUrl = target.defaultBaseUrl
   keyForm.value.modelName = target.defaultModel
 }
 
 async function saveKey() {
-  const userId = currentUser.value?.id
-  if (!userId) return
+  if (!currentUser.value) return
   const keyId = editingKeyId.value
-  const wasDefault = keys.value.some(key => key.id === keyId && key.defaultKey)
   configLoading.value = true
   configError.value = ''
   try {
     const url = keyId
-      ? `/api/users/${userId}/keys/${keyId}`
-      : `/api/users/${userId}/keys`
+      ? `/api/users/${currentUser.value.id}/keys/${keyId}`
+      : `/api/users/${currentUser.value.id}/keys`
     await api(url, {
       method: keyId ? 'PUT' : 'POST',
       headers: { 'Content-Type': 'application/json' },
@@ -433,7 +487,6 @@ async function saveKey() {
     })
     cancelKeyForm()
     await loadKeys()
-    if (wasDefault) clear()
   } catch (e) {
     configError.value = '保存 Key 失败：' + (e.message || String(e))
   } finally {
@@ -442,13 +495,11 @@ async function saveKey() {
 }
 
 async function setDefaultKey(key) {
-  const userId = currentUser.value?.id
-  if (!userId) return
+  if (!currentUser.value) return
   configLoading.value = true
   configError.value = ''
   try {
-    await api(`/api/users/${userId}/keys/${key.id}/default`, { method: 'PUT' })
-    clear()
+    await api(`/api/users/${currentUser.value.id}/keys/${key.id}/default`, { method: 'PUT' })
     await loadKeys()
   } catch (e) {
     configError.value = '设置默认 Key 失败：' + (e.message || String(e))
@@ -458,14 +509,12 @@ async function setDefaultKey(key) {
 }
 
 async function deleteKey(key) {
-  const userId = currentUser.value?.id
-  if (!userId) return
-  if (!window.confirm(`确定删除 Key"${key.name}"吗？`)) return
+  if (!currentUser.value) return
+  if (!window.confirm(`确定删除 Key "${key.name}" 吗？`)) return
   configLoading.value = true
   configError.value = ''
   try {
-    await api(`/api/users/${userId}/keys/${key.id}`, { method: 'DELETE' })
-    if (key.defaultKey) clear()
+    await api(`/api/users/${currentUser.value.id}/keys/${key.id}`, { method: 'DELETE' })
     await loadKeys()
   } catch (e) {
     configError.value = '删除 Key 失败：' + (e.message || String(e))
@@ -474,43 +523,228 @@ async function deleteKey(key) {
   }
 }
 
-// --- 聊天 ---
-async function send() {
-  const text = input.value.trim()
-  if (!text || loading.value || !defaultKey.value) return
-
-  error.value = ''
-  messages.value.push({ role: 'user', content: text })
-  input.value = ''
-  loading.value = true
+// ============ 对话 ============
+async function loadConversations() {
+  if (!currentUser.value) {
+    conversations.value = []
+    deletedConversations.value = []
+    return
+  }
   try {
-    const reply = await api('/api/chat', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        userId: currentUser.value.id,
-        messages: messages.value
-      })
-    })
-    messages.value.push({ role: 'assistant', content: reply?.reply ?? '(空回复)' })
-  } catch (e) {
-    error.value = '请求失败：' + (e.message || String(e))
-  } finally {
-    loading.value = false
+    const [active, deleted] = await Promise.all([
+      api('/api/conversations'),
+      api('/api/conversations?include_deleted=true').catch(() => [])
+    ])
+    conversations.value = active || []
+    deletedConversations.value = deleted || []
+  } catch {
+    conversations.value = []
+    deletedConversations.value = []
   }
 }
 
-function clear() {
-  if (loading.value) return
-  messages.value = []
-  error.value = ''
+async function createConversation() {
+  if (!currentUser.value) return
+  try {
+    const conv = await api('/api/conversations', { method: 'POST' })
+    await loadConversations()
+    await selectConversation(conv.id)
+    broadcast('conversation:created', { conversationId: conv.id })
+  } catch (e) {
+    error.value = '创建对话失败：' + (e.message || String(e))
+  }
 }
 
+async function selectConversation(id) {
+  // 切会话前先停掉旧会话的 SSE 流 + 清空 streaming 缓冲，避免旧 token 渲染到新会话
+  if (abortCtl.value) {
+    abortCtl.value.abort()
+    abortCtl.value = null
+  }
+  streaming.value = false
+  streamingContent.value = ''
+  activeConversationId.value = id
+  if (id != null) localStorage.setItem(ACTIVE_CONV_KEY, String(id))
+  await loadMessages()
+}
+
+async function loadMessages() {
+  if (activeConversationId.value == null) {
+    activeMessages.value = []
+    return
+  }
+  try {
+    const list = await api(`/api/conversations/${activeConversationId.value}/messages`)
+    activeMessages.value = list || []
+  } catch (e) {
+    error.value = '加载消息失败：' + (e.message || String(e))
+  }
+}
+
+async function deleteConversation(conv) {
+  if (!window.confirm(`确定删除对话 "${conv.title}" 吗？`)) return
+  try {
+    await api(`/api/conversations/${conv.id}`, { method: 'DELETE' })
+    if (activeConversationId.value === conv.id) {
+      activeConversationId.value = null
+      activeMessages.value = []
+      localStorage.removeItem(ACTIVE_CONV_KEY)
+    }
+    await loadConversations()
+    broadcast('conversation:deleted', { conversationId: conv.id })
+  } catch (e) {
+    error.value = '删除对话失败：' + (e.message || String(e))
+  }
+}
+
+async function restoreConversation(conv) {
+  try {
+    await api(`/api/conversations/${conv.id}/restore`, { method: 'POST' })
+    await loadConversations()
+    broadcast('conversation:updated', { conversationId: conv.id })
+  } catch (e) {
+    error.value = '恢复对话失败：' + (e.message || String(e))
+  }
+}
+
+async function permanentlyDelete(conv) {
+  if (!window.confirm(`永久删除对话 "${conv.title}"？所有消息也会被删除。`)) return
+  try {
+    await api(`/api/conversations/${conv.id}/permanent`, { method: 'DELETE' })
+    await loadConversations()
+    broadcast('conversation:deleted', { conversationId: conv.id })
+  } catch (e) {
+    error.value = '永久删除失败：' + (e.message || String(e))
+  }
+}
+
+// ============ 消息：发 / 收 / 停 ============
+async function send() {
+  const text = input.value.trim()
+  if (!text || streaming.value || !defaultKey.value || activeConversationId.value == null) return
+  error.value = ''
+  input.value = ''
+
+  // 乐观插入 USER 消息
+  activeMessages.value.push({
+    id: null,
+    localId: Date.now(),
+    conversationId: activeConversationId.value,
+    role: 'USER',
+    content: text,
+    isOrphaned: false,
+    createdAt: new Date().toISOString()
+  })
+  streaming.value = true
+  streamingContent.value = ''
+  abortCtl.value = new AbortController()
+
+  try {
+    await consumeSSE(
+      `/api/conversations/${activeConversationId.value}/messages`,
+      {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', 'Authorization': 'Bearer ' + token.value },
+        body: JSON.stringify({ content: text }),
+        signal: abortCtl.value.signal
+      },
+      {
+        onToken: tk => { streamingContent.value += tk },
+        onDone: async payload => {
+          await loadMessages()
+          await loadConversations()
+          // 同时广播 conversation:updated，让其它 tab 侧栏按 updated_at 重新排序
+          broadcast('conversation:updated', { conversationId: activeConversationId.value })
+          broadcast('message:created', { conversationId: activeConversationId.value, messageId: payload.messageId })
+        },
+        onError: payload => {
+          error.value = `AI 调用失败 (${payload.code})：${payload.message}`
+        }
+      }
+    )
+  } catch (e) {
+    if (e.name !== 'AbortError') {
+      error.value = '请求失败：' + (e.message || String(e))
+    }
+  } finally {
+    streaming.value = false
+    streamingContent.value = ''
+    abortCtl.value = null
+  }
+}
+
+function stop() {
+  if (abortCtl.value) abortCtl.value.abort()
+  streaming.value = false
+  streamingContent.value = ''
+}
+
+// ============ 编辑 / 重新生成 ============
+function startEdit(m) {
+  editingId.value = m.id
+  editingContent.value = m.content
+}
+
+function cancelEdit() {
+  editingId.value = null
+  editingContent.value = ''
+}
+
+async function commitEdit(m) {
+  const text = editingContent.value.trim()
+  if (!text) return
+  try {
+    await api(`/api/messages/${m.id}`, {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ content: text })
+    })
+    editingId.value = null
+    editingContent.value = ''
+    await loadMessages()
+  } catch (e) {
+    error.value = '编辑失败：' + (e.message || String(e))
+  }
+}
+
+async function regenerateMessage(m) {
+  if (streaming.value) return
+  streaming.value = true
+  streamingContent.value = ''
+  abortCtl.value = new AbortController()
+  try {
+    await consumeSSE(
+      `/api/messages/${m.id}/regenerate`,
+      {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', 'Authorization': 'Bearer ' + token.value },
+        signal: abortCtl.value.signal
+      },
+      {
+        onToken: tk => { streamingContent.value += tk },
+        onDone: async () => {
+          await loadMessages()
+          await loadConversations()
+        },
+        onError: payload => {
+          error.value = `重新生成失败 (${payload.code})：${payload.message}`
+        }
+      }
+    )
+  } catch (e) {
+    if (e.name !== 'AbortError') error.value = '请求失败：' + (e.message || String(e))
+  } finally {
+    streaming.value = false
+    streamingContent.value = ''
+    abortCtl.value = null
+  }
+}
+
+// ============ 滚动 ============
+watch(activeMessages, scrollToBottom, { deep: true })
 function scrollToBottom() {
   nextTick(() => {
-    if (messagesRef.value) {
-      messagesRef.value.scrollTop = messagesRef.value.scrollHeight
-    }
+    if (messagesRef.value) messagesRef.value.scrollTop = messagesRef.value.scrollHeight
   })
 }
 </script>
@@ -518,15 +752,14 @@ function scrollToBottom() {
 <style scoped>
 .app {
   display: flex;
+  flex: 1;
   flex-direction: column;
   height: 100%;
-  max-width: 1180px;
-  margin: 0 auto;
   background: #fff;
   box-shadow: 0 0 24px rgba(0, 0, 0, 0.06);
 }
 
-/* ---- 登录遮罩 ---- */
+/* ===== 登录遮罩 ===== */
 .auth-overlay {
   position: fixed;
   inset: 0;
@@ -536,7 +769,6 @@ function scrollToBottom() {
   justify-content: center;
   background: rgba(0, 0, 0, 0.35);
 }
-
 .auth-card {
   width: 360px;
   padding: 28px 24px;
@@ -544,71 +776,31 @@ function scrollToBottom() {
   background: #fff;
   box-shadow: 0 12px 40px rgba(0, 0, 0, 0.15);
 }
-
-.auth-card h2 {
-  text-align: center;
-  font-size: 18px;
-  margin-bottom: 18px;
-}
-
-.auth-form {
-  display: flex;
-  flex-direction: column;
-  gap: 10px;
-}
-
+.auth-card h2 { text-align: center; font-size: 18px; margin-bottom: 18px; }
+.auth-form { display: flex; flex-direction: column; gap: 10px; }
 .auth-form input {
   padding: 9px 12px;
   border: 1px solid #d0d0d0;
   border-radius: 8px;
   font-size: 14px;
 }
+.auth-submit { padding: 10px; font-size: 14px; margin-top: 4px; }
+.auth-switch { text-align: center; margin-top: 12px; }
 
-.auth-submit {
-  padding: 10px;
-  font-size: 14px;
-  margin-top: 4px;
-}
-
-.auth-switch {
-  text-align: center;
-  margin-top: 12px;
-}
-
-/* ---- 头部 ---- */
+/* ===== 头部 ===== */
 .header {
   display: flex;
   align-items: center;
   justify-content: space-between;
   gap: 16px;
-  padding: 14px 20px;
+  padding: 12px 20px;
   border-bottom: 1px solid #ececec;
   background: #fafafa;
 }
-
-.header h1 {
-  font-size: 18px;
-  font-weight: 600;
-}
-
-.current-key {
-  margin-top: 3px;
-  color: #64748b;
-  font-size: 12px;
-}
-
-.current-key.warning {
-  color: #b45309;
-}
-
-.controls {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  flex-wrap: wrap;
-  justify-content: flex-end;
-}
-
+.brand h1 { font-size: 18px; font-weight: 600; }
+.current-key { margin-top: 3px; color: #64748b; font-size: 12px; }
+.current-key.warning { color: #b45309; }
+.controls { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; justify-content: flex-end; }
 .user-badge {
   padding: 4px 10px;
   border-radius: 999px;
@@ -618,210 +810,45 @@ function scrollToBottom() {
   font-weight: 500;
 }
 
-select,
-input,
-textarea,
-button {
-  font: inherit;
-}
-
-.controls select,
-.secondary,
-.key-form input,
-.key-form select {
-  padding: 7px 10px;
-  border: 1px solid #d0d0d0;
-  border-radius: 8px;
-  background: #fff;
-}
-
-button {
-  cursor: pointer;
-}
-
-button:disabled,
-select:disabled,
-input:disabled,
-textarea:disabled {
-  cursor: not-allowed;
-  opacity: 0.55;
-}
-
+/* ===== 三栏布局 ===== */
 .workspace {
-  display: flex;
+  display: grid;
+  grid-template-columns: 260px 1fr auto;
   flex: 1;
   min-height: 0;
 }
 
-.manager {
-  width: 340px;
-  overflow-y: auto;
+/* ===== 左侧栏 ===== */
+.sidebar {
   border-right: 1px solid #e5e7eb;
   background: #f8fafc;
+  padding: 12px;
+  overflow-y: auto;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
 }
-
-.panel-section {
-  padding: 16px;
-  border-bottom: 1px solid #e5e7eb;
-}
-
-.section-title {
+.new-conv { width: 100%; padding: 8px; border-radius: 8px; border: none; background: #2563eb; color: #fff; cursor: pointer; }
+.sidebar-empty { color: #94a3b8; text-align: center; font-size: 13px; padding: 14px; }
+.conv-list { list-style: none; padding: 0; display: flex; flex-direction: column; gap: 4px; }
+.conv-item {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  gap: 8px;
-  margin-bottom: 12px;
-}
-
-.section-title h2 {
-  font-size: 14px;
-}
-
-.key-form {
-  display: flex;
-  flex-direction: column;
-  gap: 9px;
-}
-
-.key-form input,
-.key-form select {
-  width: 100%;
-  font-size: 13px;
-}
-
-.primary {
-  padding: 8px 12px;
-  border: none;
+  padding: 8px 10px;
   border-radius: 8px;
-  color: #fff;
-  background: #2563eb;
-}
-
-.secondary {
-  color: #334155;
-}
-
-.secondary.small {
-  padding: 5px 8px;
-  font-size: 12px;
-}
-
-.text-button {
-  padding: 0;
-  border: none;
-  color: #2563eb;
-  background: transparent;
-  font-size: 12px;
-}
-
-.text-button.danger {
-  color: #b91c1c;
-}
-
-.panel-empty {
-  padding: 18px 8px;
-  color: #94a3b8;
-  text-align: center;
-  font-size: 13px;
-}
-
-.key-list {
-  display: flex;
-  flex-direction: column;
-  gap: 9px;
-}
-
-.key-card {
-  padding: 11px;
-  border: 1px solid #e2e8f0;
-  border-radius: 10px;
-  background: #fff;
-}
-
-.key-heading,
-.key-actions {
-  display: flex;
-  align-items: center;
-  gap: 7px;
-}
-
-.key-heading strong {
-  margin-right: auto;
-  font-size: 13px;
-}
-
-.badge {
-  padding: 2px 6px;
-  border-radius: 999px;
-  font-size: 10px;
-}
-
-.badge.default {
-  color: #1d4ed8;
-  background: #dbeafe;
-}
-
-.badge.enabled {
-  color: #047857;
-  background: #d1fae5;
-}
-
-.badge.disabled {
-  color: #64748b;
-  background: #e2e8f0;
-}
-
-.key-meta {
-  margin-top: 5px;
-  overflow: hidden;
-  color: #64748b;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-  font-size: 11px;
-}
-
-.key-actions {
-  margin-top: 9px;
-}
-
-.key-form label {
-  color: #475569;
-  font-size: 12px;
-}
-
-.key-form label input,
-.key-form label select {
-  margin-top: 4px;
-}
-
-.checkbox-label {
-  display: flex;
-  align-items: center;
-  gap: 7px;
-}
-
-.checkbox-label input {
-  width: auto;
-  margin: 0;
-}
-
-.panel-error {
-  margin: 12px;
-  padding: 9px;
-  border-radius: 8px;
-  color: #b91c1c;
-  background: #fee2e2;
-  font-size: 12px;
   cursor: pointer;
+  font-size: 13px;
 }
+.conv-item:hover { background: #e2e8f0; }
+.conv-item.active { background: #dbeafe; color: #1d4ed8; }
+.conv-item.deleted { opacity: 0.65; }
+.conv-title { flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.conv-actions { display: flex; gap: 6px; }
+.trash-section { margin-top: auto; border-top: 1px solid #e2e8f0; padding-top: 8px; }
 
-.chat {
-  display: flex;
-  flex: 1;
-  min-width: 0;
-  flex-direction: column;
-}
-
+/* ===== 主聊天区 ===== */
+.chat { display: flex; min-width: 0; flex-direction: column; }
 .messages {
   display: flex;
   flex: 1;
@@ -832,92 +859,63 @@ textarea:disabled {
   padding: 20px;
   background: #fff;
 }
-
-.empty {
-  margin: auto;
-  color: #999;
-  font-size: 14px;
-  text-align: center;
-}
-
+.empty { margin: auto; color: #999; font-size: 14px; text-align: center; }
 .message {
   display: flex;
   max-width: 80%;
   flex-direction: column;
 }
-
-.message.user {
-  align-self: flex-end;
-  align-items: flex-end;
-}
-
-.message.assistant {
-  align-self: flex-start;
-  align-items: flex-start;
-}
-
+.message.user { align-self: flex-end; align-items: flex-end; }
+.message.assistant { align-self: flex-start; align-items: flex-start; }
+.message.orphaned { opacity: 0.45; }
 .bubble {
   padding: 10px 14px;
   border-radius: 14px;
   line-height: 1.55;
-  white-space: pre-wrap;
-  word-wrap: break-word;
   font-size: 15px;
+  word-wrap: break-word;
   box-shadow: 0 1px 2px rgba(0, 0, 0, 0.04);
 }
-
-.message.user .bubble {
-  color: #fff;
-  background: #2563eb;
-  border-bottom-right-radius: 4px;
+.bubble :deep(pre) {
+  background: #f6f8fa;
+  border-radius: 8px;
+  padding: 10px 12px;
+  overflow-x: auto;
+  font-size: 13px;
 }
-
-.message.assistant .bubble {
-  color: #1d1d1f;
-  background: #f1f1f3;
-  border-bottom-left-radius: 4px;
+.bubble :deep(code) { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 0.9em; }
+.bubble :deep(pre code) { background: transparent; padding: 0; }
+.bubble :deep(p) { margin: 0 0 8px 0; }
+.bubble :deep(p:last-child) { margin-bottom: 0; }
+.bubble :deep(ul), .bubble :deep(ol) { padding-left: 22px; margin: 6px 0; }
+.bubble :deep(table) { border-collapse: collapse; margin: 8px 0; }
+.bubble :deep(th), .bubble :deep(td) { border: 1px solid #d0d7de; padding: 4px 8px; }
+.message.user .bubble { color: #fff; background: #2563eb; border-bottom-right-radius: 4px; }
+.message.assistant .bubble { color: #1d1d1f; background: #f1f1f3; border-bottom-left-radius: 4px; }
+.edit-bubble { background: #f1f1f3; }
+.edit-bubble textarea {
+  width: 100%;
+  border: 1px solid #d0d0d0;
+  border-radius: 6px;
+  padding: 6px;
+  resize: vertical;
+  font: inherit;
 }
-
-.bubble.loading {
-  display: inline-flex;
-  align-items: center;
-  gap: 4px;
-  min-width: 52px;
-  min-height: 22px;
-}
-
-.dot {
-  width: 6px;
-  height: 6px;
-  border-radius: 50%;
-  background: #888;
-  animation: bounce 1.2s infinite ease-in-out;
-}
-
-.dot:nth-child(2) { animation-delay: 0.15s; }
-.dot:nth-child(3) { animation-delay: 0.3s; }
-
-@keyframes bounce {
-  0%, 80%, 100% { transform: scale(0.6); opacity: 0.5; }
-  40% { transform: scale(1); opacity: 1; }
-}
+.edit-actions { display: flex; gap: 8px; margin-top: 6px; }
 
 .meta {
   margin-top: 4px;
   padding: 0 4px;
   color: #999;
   font-size: 11px;
+  display: flex;
+  gap: 10px;
 }
+.meta-action { cursor: pointer; color: #2563eb; }
+.meta-action:hover { text-decoration: underline; }
+.orphan-tag { color: #b45309; font-weight: 500; }
 
-.error {
-  padding: 10px 16px;
-  border-top: 1px solid #fecaca;
-  color: #b91c1c;
-  background: #fee2e2;
-  font-size: 13px;
-  cursor: pointer;
-}
-
+/* ===== 输入区 ===== */
 .composer {
   display: flex;
   align-items: flex-end;
@@ -926,7 +924,6 @@ textarea:disabled {
   border-top: 1px solid #ececec;
   background: #fafafa;
 }
-
 .composer textarea {
   flex: 1;
   max-height: 160px;
@@ -939,11 +936,7 @@ textarea:disabled {
   font-size: 15px;
   line-height: 1.5;
 }
-
-.composer textarea:focus {
-  border-color: #2563eb;
-}
-
+.composer textarea:focus { border-color: #2563eb; }
 .send {
   padding: 10px 20px;
   border: none;
@@ -952,38 +945,97 @@ textarea:disabled {
   background: #2563eb;
   font-size: 14px;
   font-weight: 500;
+  cursor: pointer;
+}
+.send:disabled { opacity: 0.55; cursor: not-allowed; }
+.send.stop { background: #b91c1c; }
+.error {
+  padding: 10px 16px;
+  border-top: 1px solid #fecaca;
+  color: #b91c1c;
+  background: #fee2e2;
+  font-size: 13px;
+  cursor: pointer;
 }
 
-.send:hover:not(:disabled),
-.primary:hover:not(:disabled) {
-  background: #1d4ed8;
+/* ===== Key Drawer ===== */
+.key-drawer {
+  width: 340px;
+  overflow-y: auto;
+  border-left: 1px solid #e5e7eb;
+  background: #f8fafc;
+}
+.panel-section { padding: 16px; border-bottom: 1px solid #e5e7eb; }
+.section-title { display: flex; align-items: center; justify-content: space-between; gap: 8px; margin-bottom: 12px; }
+.section-title h2 { font-size: 14px; }
+.panel-empty { padding: 18px 8px; color: #94a3b8; text-align: center; font-size: 13px; }
+.key-list { display: flex; flex-direction: column; gap: 9px; }
+.key-card {
+  padding: 11px;
+  border: 1px solid #e2e8f0;
+  border-radius: 10px;
+  background: #fff;
+}
+.key-heading, .key-actions { display: flex; align-items: center; gap: 7px; }
+.key-heading strong { margin-right: auto; font-size: 13px; }
+.badge { padding: 2px 6px; border-radius: 999px; font-size: 10px; }
+.badge.default { color: #1d4ed8; background: #dbeafe; }
+.badge.enabled { color: #047857; background: #d1fae5; }
+.badge.disabled { color: #64748b; background: #e2e8f0; }
+.key-meta { margin-top: 5px; overflow: hidden; color: #64748b; text-overflow: ellipsis; white-space: nowrap; font-size: 11px; }
+.key-actions { margin-top: 9px; }
+.key-form { display: flex; flex-direction: column; gap: 9px; }
+.key-form input, .key-form select {
+  width: 100%;
+  padding: 7px 10px;
+  border: 1px solid #d0d0d0;
+  border-radius: 8px;
+  font-size: 13px;
+  margin-top: 4px;
+}
+.key-form label { color: #475569; font-size: 12px; }
+.checkbox-label { display: flex; align-items: center; gap: 7px; }
+.checkbox-label input { width: auto; margin: 0; }
+.primary {
+  padding: 8px 12px;
+  border: none;
+  border-radius: 8px;
+  color: #fff;
+  background: #2563eb;
+  cursor: pointer;
+}
+.primary.small { padding: 5px 10px; font-size: 12px; }
+.secondary {
+  color: #334155;
+  padding: 7px 10px;
+  border: 1px solid #d0d0d0;
+  border-radius: 8px;
+  background: #fff;
+  cursor: pointer;
+}
+.secondary.small { padding: 5px 8px; font-size: 12px; }
+.text-button {
+  padding: 0;
+  border: none;
+  color: #2563eb;
+  background: transparent;
+  font-size: 12px;
+  cursor: pointer;
+}
+.text-button.danger { color: #b91c1c; }
+.text-button:hover { text-decoration: underline; }
+.panel-error {
+  margin: 12px;
+  padding: 9px;
+  border-radius: 8px;
+  color: #b91c1c;
+  background: #fee2e2;
+  font-size: 12px;
+  cursor: pointer;
 }
 
-@media (max-width: 760px) {
-  .header {
-    align-items: flex-start;
-    flex-direction: column;
-  }
-
-  .controls {
-    width: 100%;
-    justify-content: flex-start;
-  }
-
-  .workspace {
-    flex-direction: column;
-    overflow-y: auto;
-  }
-
-  .manager {
-    width: 100%;
-    max-height: 48%;
-    border-right: none;
-    border-bottom: 1px solid #e5e7eb;
-  }
-
-  .chat {
-    min-height: 52%;
-  }
+@media (max-width: 880px) {
+  .workspace { grid-template-columns: 1fr; }
+  .sidebar, .key-drawer { display: none; }
 }
 </style>

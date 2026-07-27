@@ -75,8 +75,10 @@
   - 证据：`UserApiKeyService.mask`。
 - 来源：README "Key 响应脱敏" + 代码。
 
-### 1.8 对话与消息（已设计，未实现 — 2026-07-27）
-- 设计定稿见 ADR `docs/adr/0003-conversations-and-messages.md`：引入 `conversation` 与 `message` 两表；用户可建多个对话，每个对话有独立标题 / 创建时间 / 消息流；AI 看得见同对话内全部未作废消息；用户可编辑 USER 消息 / 重新生成 ASSISTANT 消息；流式输出；多 tab 通过 `BroadcastChannel` 实时同步；Markdown + 代码高亮 + 公式 + 图片渲染。
+### 1.8 对话与消息（已实现 — 2026-07-27）
+- 设计定稿见 ADR `docs/adr/0003-conversations-and-messages.md`：引入 `conversation` 与 `message` 两表；用户可建多个对话，每个对话有独立标题 / 创建时间 / 消息流；AI 看得见同对话内全部未作废消息；用户可编辑 USER 消息 / 重新生成 ASSISTANT 消息；流式输出；多 tab 通过 `BroadcastChannel` 实时同步；Markdown + 代码高亮 + 公式渲染。
+- 实现证据：`ConversationService` / `MessageService`（4 个短事务边界）/ `ConversationController` / `MessageController`（SSE）；`ConversationCleanupTask` 每天 03:00 跑 `my-ai.trash.retention-days`（默认 30）；前端 `lib/markdown.js`（markdown-it + highlight.js + katex + DOMPurify）+ `lib/sse.js`（fetch + ReadableStream）。
+- 落地偏离 ADR 之处：(1) 业务码 4030 已被「跨用户拒绝」占用，新增 **4035** 给"默认 Key 不可用"；(2) `POST /api/chat` 保留为 **deprecated alias**（带 `Deprecation: true` 头），不删除；(3) PATCH edit **不**自动重跑 AI（需用户主动触发）。ADR 同步修订。
 - 落地形式：
   - 后端：11 个新端点替换 `POST /api/chat`；`@Scheduled` 任务每天清理 30 天前的软删对话；`title_manually_set` / `is_orphaned` / `deleted_at` 等软标记字段。
   - 前端：App.vue 加左侧栏（用户下拉 / 对话列表 / 已删除折叠区）；`marked` + `highlight.js` + `KaTeX` + `DOMPurify` 渲染；`localStorage` 记忆上次激活的对话。

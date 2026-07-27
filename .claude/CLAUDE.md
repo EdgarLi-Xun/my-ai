@@ -84,6 +84,11 @@ Maven 不会自动触发 `npm run build`；改前端源码后必须手动构建�
 8. **认证走 Spring Security 6 + JWT**：`/api/auth/{register, login, me}` 公开；`GET /api/providers` 公开；`/h2-console/**`、`/static/**`、`/`、`/error` 公开；其余 `/api/*` 全部需登录。`JwtAuthenticationFilter` 从 `Authorization: Bearer` 解析 `userId` 并注入 `AuthPrincipal`。密码 BCrypt 散列；`User.passwordHash` 加 `@JsonIgnore` / `@ToString.Exclude` 不外露。
 9. **Key 明文落地但不外发**：`UserApiKey.apiKey` 用 `@ToString.Exclude` 屏蔽日志；响应体走 `mask()` 只回 `****abcd` 和 `hasApiKey`；编辑时空字符串明确表示保留原值。
 10. **FlexConfig 不能删**：显式声明 `HikariDataSource` 并交给 MyBatis-Flex 的 `FlexSqlSessionFactoryBean`，兼容 Spring Boot 4 自动数据源装配；同时保证 `MapUnderscoreToCamelCase=true`（Flex 1.x 强制）。删除或注释该类会导致启动失败 / 下划线字段无法映射。
+11. **对话 AI 上下文**：调 AI 前只取同对话内 `is_orphaned = FALSE` 的全部消息按 `created_at` 升序拼接；不同对话互不干扰。`is_orphaned = TRUE` 是软标记，不物理删除旧消息，保留回溯可能（ADR 0003 §4）。
+12. **SSE 端点不走 `Result<>` 外壳**：`POST /api/conversations/{id}/messages` 与 `POST /api/messages/{id}/regenerate` 返回 `SseEmitter` + `Content-Type: text/event-stream`，事件协议 `event: token` / `event: done` / `event: error`，前端 SSE 解析绕 `api()` 包装（`frontend/src/lib/sse.js`）。其余 controller 仍走 `Result<>`。
+13. **`updated_at` 显式维护**：H2 不依赖 `ON UPDATE CURRENT_TIMESTAMP`，`MessageService` 在 USER / ASSISTANT 消息插入、edit / regenerate 标 orphan 后显式调 `ConversationMapper.touchUpdatedAt(id)`。漏掉会让侧栏顺序错乱。
+14. **业务码语义不重叠**：4030 = 跨用户拒绝（保留 `FORBIDDEN`）；4035 = 默认 Key 不可用（NULL / disabled / 配置无效）；4031-4034 = 对话 / 消息相关错误。详见 `BizException.java`。
+15. **`POST /api/chat` 已 deprecated**：保留作为兼容 alias，响应头带 `Deprecation: true` + `Warning: 299`；新代码必须用 `POST /api/conversations/{id}/messages`。下架时间未定。
 
 ### 数据模型（与 schema.sql 对齐）
 

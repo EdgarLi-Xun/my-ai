@@ -4,8 +4,7 @@ spring:
 
   # H2 嵌入式数据库配置（文件模式，数据保存在 ./data/myai.mv.db）
   # AUTO_SERVER=TRUE 允许多 JVM 实例（如 8031 + 8032 + IDE debug）共享同一个 DB 文件
-  # 注意：H2 2.x 强制要求 DB_CLOSE_ON_EXIT 不能为 FALSE（与 AUTO_SERVER 互斥）；用默认 TRUE
-  # 配合 DB_CLOSE_DELAY=-1（连接池内连接保持打开直到 JVM 退出）。
+  # 注意：H2 2.x 强制要求 DB_CLOSE_ON_EXIT 不能为 FALSE（与 AUTO_SERVER 互斥）
   datasource:
     jdbc-url: jdbc:h2:file:./data/myai;DB_CLOSE_DELAY=-1;MODE=MySQL;NON_KEYWORDS=USER;AUTO_SERVER=TRUE
     username: sa
@@ -71,12 +70,8 @@ my-ai:
     # 过期时间（单位秒），默认 7 天
     expiration: ${MYAI_JWT_EXPIRATION:604800}
 
-  # 对话回收策略：软删对话保留多少天后被定时任务 hard delete（ADR 0003）
-  trash:
-    retention-days: ${MYAI_TRASH_RETENTION_DAYS:30}
-
 server:
-  port: 8031
+  port: 8032
 
 logging:
   level:

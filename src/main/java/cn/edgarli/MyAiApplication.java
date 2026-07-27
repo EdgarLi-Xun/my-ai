@@ -1,5 +1,6 @@
 package cn.edgarli;
 
+import cn.edgarli.config.TrashProperties;
 import cn.edgarli.mapper.UserApiKeyMapper;
 import cn.edgarli.mapper.UserMapper;
 import org.apache.ibatis.annotations.Mapper;
@@ -7,12 +8,16 @@ import org.mybatis.spring.annotation.MapperScan;
 import org.springframework.boot.CommandLineRunner;
 import org.springframework.boot.SpringApplication;
 import org.springframework.boot.autoconfigure.SpringBootApplication;
+import org.springframework.boot.context.properties.EnableConfigurationProperties;
 import org.springframework.context.annotation.Bean;
+import org.springframework.scheduling.annotation.EnableScheduling;
 
 /**
  * Spring Boot 应用启动入口。
  */
 @SpringBootApplication
+@EnableScheduling
+@EnableConfigurationProperties(TrashProperties.class)
 @MapperScan(basePackages = "cn.edgarli.mapper", annotationClass = Mapper.class)
 public class MyAiApplication {
 

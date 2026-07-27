@@ -100,11 +100,11 @@ MyAi 原 `/api/chat` 是无状态的：每次调用只把当前消息丢给 AI�
 ## 后果
 
 ### 数据模型变更
-- 新增 `conversation` 表（9 列），`message` 表（5 列 + 2 约束）。
-- `schema.sql` 用 `CREATE TABLE IF NOT EXISTS` + `ALTER TABLE ADD COLUMN IF NOT EXISTS` 兼容旧 H2 文件（沿用 CLAUDE.md 4 节"幂等 DDL"模式）。
+- 新增 `conversation` 表（7 列），`message` 表（5 列 + 1 CHECK 约束 + 1 FK）。
+- `schema.sql` 用 `CREATE TABLE IF NOT EXISTS` + `ALTER TABLE ADD CONSTRAINT IF NOT EXISTS` 兼容旧 H2 文件（沿用 CLAUDE.md 4 节"幂等 DDL"模式）。
 
-### API 变更（破坏性）
-- 删 `POST /api/chat`。
+### API 变更（破坏性，落地后部分偏离）
+- **删 `POST /api/chat`**：原计划删除。**实施期偏离 → 保留为 deprecated alias**，响应头带 `Deprecation: true` + `Warning: 299`，老 curl 脚本与外部调用兼容；下架时间未定。下文 §API 变更原文保留以备追溯。
 - 新增 11 个端点（见设计摘要 §2），全部要求登录态。
 - `ChatController` 拆为 `ConversationController` + `MessageController`（不混在同一个 controller）。
 
@@ -112,8 +112,15 @@ MyAi 原 `/api/chat` 是无状态的：每次调用只把当前消息丢给 AI�
 - 后端：`spring-ai-openai` / `spring-ai-ollama` / `spring-ai-anthropic` 的 `stream()` API（已有依赖，不用新增）。
 - 前端：`marked` + `markdown-it` 二选一、`highlight.js`、`KaTeX`、`DOMPurify`。总计 ~400KB min+gz。
 
-### 错误码新增
-- 4030（默认 Key 不可用）、4031（对话不存在 / 已删）、4032（消息不存在 / 不属于当前用户）、4033（编辑消息不是 USER）、4034（重新生成不是 ASSISTANT）。
+### 错误码新增（实施期偏离）
+- 原计划：4030 = 默认 Key 不可用；4031-4034 = 对话 / 消息相关。
+- **实施期偏离**：4030 已被 `BizException.FORBIDDEN` 占用（`GlobalExceptionHandler.AccessDeniedException` + `UserController.requireOwner` + `UserApiKeyController.requireOwner` + `ChatController` deprecated alias）。新增 **4035 = `DEFAULT_KEY_UNAVAILABLE`** 接管；4031-4034 不变。
+- 完整码表见 `.claude/api.md` §5.3。
+
+### PATCH edit 语义（实施期偏离）
+- 原计划："用户编辑一条 USER 消息 → 该消息之后所有消息标 `is_orphaned = TRUE` → AI 用新内容 + 该消息之前的全部未作废消息重新跑"。
+- **实施期偏离 → 仅标 orphan，不自动重跑 AI**。用户必须主动"发送新消息"或点 ASSISTANT 的"重新生成"才让 AI 看到新内容（与 ChatGPT 默认行为一致）。理由：自动重跑会覆盖性破坏用户在后续 ASSISTANT 上的编辑意图。
+- 落地代码：`MessageService.edit`（`MessageService.java`）只做 UPDATE content + markOrphansAfter + touchConversation，**不**调 AI。
 
 ### UI 变更
 - `App.vue` 从"四面板单 SFC"演化为"左侧栏 + 主区 + 顶部菜单 / 底部抽屉"。SFC 仍保持单文件，不引入 vue-router。

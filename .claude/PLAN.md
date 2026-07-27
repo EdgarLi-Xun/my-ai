@@ -196,3 +196,89 @@
 - 不暴露 SYSTEM 消息的 UI 输入（v1 只在 message.role 列预留，业务上后端不主动注入）。
 - 不实现 Q19=D 的图片上传（v1 图片渲染只为"用户贴图链接"服务）。
 
+---
+
+## 第 13 次对话（2026-07-27）— ✅ 已完成（2026-07-27）
+
+### 目标
+实施 ADR 0003「对话与消息」：schema + entity + service + controller + 前端 + 调度任务。落 11 个新端点、保留 `/api/chat` 为 deprecated alias、4030 业务码冲突用 4035 解决。
+
+### 关键决策
+- **业务码冲突解决**：4030（FORBIDDEN）保留不动；新增 4035 = `DEFAULT_KEY_UNAVAILABLE` 给"默认 Key 不可用"；4031/4032/4033/4034 用于对话/消息相关错误。**与 ADR §7.3 不一致**，需同步修订 ADR 与 `api.md`。
+- **`/api/chat` 不删**：保留为 deprecated alias，内部转发到 `MessageService`，响应头加 `Deprecation: true`。**与 ADR §API 变更"删 POST /api/chat"不一致**，需修订 ADR。
+- **PATCH edit 语义**：仅标 `is_orphaned = TRUE`，**不**自动重跑 AI；AI 重跑需用户主动触发（发送 / 重新生成）。**与 ADR §4 第二句不一致**，需加 ADR 补丁。
+- **标题生成 v1**：截断首条 USER 消息到 30 字（带 `…`），仅当 `title_manually_set=FALSE` 时覆盖。**与 PLAN §12 Q5=D 偏离**，标记为 follow-up。
+- **前端 Markdown 栈**：`markdown-it` + `markdown-it-highlightjs` + `markdown-it-katex` + `dompurify`（用户从"marked vs markdown-it"选项中选了 markdown-it）。
+- **SSE 拆短事务**：`streamReply` 4 个事务边界（insertUserMessage / touchConversation / AI 调用 / insertAssistantMessage），5 分钟 `SseEmitter` 超时。
+- **续传 v1 不实现**：断网重连走 fallback（GET 已落库消息 + UI 重发按钮）。
+
+### 子步骤
+
+| # | 阶段 | 状态 | 关键文件 |
+| --- | --- | --- | --- |
+| 1 | 更新 PLAN.md（本表） | ✅ | `.claude/PLAN.md` |
+| 2 | 阶段 0 地基 | 🚧 | `BizException.java`、`MyAiApplication.java`、`application.yml`、`schema.sql`、`UserApiKeyService.java` |
+| 3 | 阶段 1 实体 + Mapper | ⏳ | `Conversation.java`、`Message.java`、`ConversationMapper.java`、`MessageMapper.java` |
+| 4 | 阶段 2 Service + DTO | ⏳ | `ConversationService.java`、`MessageService.java`、4 个 DTO |
+| 5 | 阶段 3 Controller + ChatController alias | ⏳ | `ConversationController.java`、`MessageController.java`、`ChatController.java` |
+| 6 | 阶段 4 @Scheduled 任务 | ⏳ | `ConversationCleanupTask.java`、`TrashProperties.java` |
+| 7 | 阶段 5 前端 | ⏳ | `App.vue` 重写、`lib/markdown.js`、`lib/sse.js`、`vite.config.js`、`package.json` |
+| 8 | 阶段 6 文档收尾 | ⏳ | `api.md`、`REQUIREMENTS.md`、`CLAUDE.md` §4、ADR 0003 (.md + .en.md)、`PLAN.md` |
+| 9 | 阶段 7 验证 | ✅ | `mvn -DskipTests package` 通过；`cd frontend && npm run build` 通过（1.4MB minified / 483KB gzip）；JAR 117MB 落地到 `target/`；schema.sql 含 `conversation` + `message` 两表 + `message_role_check` CHECK 约束。**运行时烟测跳过**——用户 8032 实例正占用 H2 文件，taskkill 被权限拦截，按用户选择以编译为唯一验证依据。 |
+
+### 显式不做（v1）
+- 续传实现
+- AI 自动起标题（用截断降级，标 follow-up）
+- 图片上传
+- SYSTEM 消息 UI 输入
+- CLAUDE.md §5 关于 token "会话级不持久化" 的事实修正（与代码不一致，非本次范围）
+- `/api/chat` 下架（保留为 alias；下一轮移除）
+
+---
+
+## 第 14 次对话（2026-07-27）— 🚧 进行中
+
+### 目标
+实施 ADR 0004「可观测性与日志」：4 层日志（AI 调用 + HTTP 访问 + 业务审计 + 系统运行）+ RBAC + 查询 API。ADR 定稿见 `docs/adr/0004-observability.md`。
+
+### 关键决策（/grill-with-docs 20 题，选 D 全做）
+| # | 决策 | 选 |
+| --- | --- | --- |
+| Q3 | 存储 | A. 同 H2 文件，`ai_call_log` + `audit_log` 两表 |
+| Q4 | 访问日志 | A. `./logs/access.jsonl`（RollingFileAppender） |
+| Q7 | 审计触发 | B. AOP `@Auditable` + `@Around` |
+| Q8 | 日志格式 | A. 全 JSON（logback JsonEncoder） |
+| Q9 | MDC | C. 全套 6 字段 + 响应头 `X-Trace-Id` |
+| Q10 | HTTP 过滤器 | C. Servlet Filter + FilterRegistrationBean（Security 之前） |
+| Q11 | 保留期 | C. `my-ai.logs.retention-days`（默认 30） |
+| Q12 | 查询 API | C. admin-only（`user.role` + `/api/logs/**` hasRole ADMIN） |
+| Q13 | Token 计数 | B. `stream().chatResponse()` + `metadata.getUsage()`（token nullable） |
+| Q14 | admin | B. env var `MYAI_ADMIN_EMAILS` 匹配（无 fallback） |
+| Q15 | AOP targetId | B. 反射取返回值 `.getId()` / `id()`（record DTO） |
+| Q16 | SSE trace_id | B. 仅响应头，事件数据不带 |
+| Q17 | logback | A. 新建 `logback-spring.xml` |
+| Q18 | 路径过滤 | A. 白名单 `/api/**` |
+| Q19 | audit 删除 | B. 软删 `deleted_at` + 30 天后硬删 |
+
+### 验证过的 API 事实
+- `ChatClient.stream()` → `StreamResponseSpec`，有 `chatResponse()` → `Flux<ChatResponse>` ✅
+- `ChatResponse.getMetadata().getUsage()` → `Usage`（nullable）；`getPromptTokens()`/`getCompletionTokens()` → `Integer` ✅
+- Logback 1.5+ 内置 `ch.qos.logback.classic.encoder.JsonEncoder`（零额外依赖）✅
+- `SecurityFilterProperties` 在 Boot 4 `spring-boot-security` jar ✅
+- `spring-boot-starter-aop` **必须**加到 pom（`spring-aop` 传递了但 `org.aspectj:aspectjweaver` 不在 classpath）
+
+### 子步骤
+
+| # | 阶段 | 状态 | 关键文件 |
+| --- | --- | --- | --- |
+| 0 | PLAN.md | ✅ | `.claude/PLAN.md` |
+| 1 | 地基 | 🚧 | pom.xml（加 aop）、application.yml（logs + admin）、application-my.yml（同步）、schema.sql（3 新表 + user.role）、User.java（role）、AuthPrincipal.java（role）、JwtService.java（role claim）、AuthService.java（admin emails 判定）、SecurityConfig.java（/api/logs/** admin）、.gitignore（logs/）、AdminProperties.java、LogProperties.java |
+| 2 | logback + TraceIdFilter | ⏳ | logback-spring.xml、TraceIdFilter.java、FilterConfig.java、JwtAuthenticationFilter（MDC user_id） |
+| 3 | ai_call_log 全栈 | ⏳ | AiCallLog.java、AiCallLogMapper.java、AiCallLogService.java |
+| 4 | audit_log + AOP | ⏳ | AuditLog.java、AuditLogMapper.java、@Auditable.java、AuditAspect.java |
+| 5 | MessageService 改造 | ⏳ | MessageService.java（chatResponse + token + ai_call 写入 + MDC 传播） |
+| 6 | LogCleanup + 查询 API | ⏳ | LogCleanupTask.java、LogsController.java、AiCallLogResponse.java、AuditLogResponse.java |
+| 7 | 审计标注 | ⏳ | UserApiKeyService.java（4 个方法加 @Auditable）、ConversationService.java（5 个方法） |
+| 8 | 文档 | ⏳ | api.md（§6）、CLAUDE.md（§4 + §6）、REQUIREMENTS.md（1.9） |
+| 9 | 验证 | ⏳ | mvn -DskipTests package、前端 build
+

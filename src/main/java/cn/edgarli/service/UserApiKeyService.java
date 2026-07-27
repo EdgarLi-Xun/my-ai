@@ -103,11 +103,11 @@ public class UserApiKeyService {
     public UserApiKey getDefaultForChat(Long userId) {
         User user = requireUser(userId);
         if (user.getDefaultKeyId() == null) {
-            throw BizException.conflict("用户没有可用的默认 Key");
+            throw BizException.defaultKeyUnavailable("用户没有可用的默认 Key");
         }
         UserApiKey key = keyMapper.findByIdAndUserId(user.getDefaultKeyId(), userId);
         if (key == null || !Boolean.TRUE.equals(key.getEnabled())) {
-            throw BizException.conflict("用户没有可用的默认 Key");
+            throw BizException.defaultKeyUnavailable("用户没有可用的默认 Key");
         }
         validateConfiguration(key);
         return key;

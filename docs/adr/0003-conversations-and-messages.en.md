@@ -100,11 +100,11 @@ MyAi's original `POST /api/chat` was stateless: each call submitted a single mes
 ## Consequences
 
 ### Data model changes
-- New `conversation` table (9 columns) and `message` table (5 columns + 2 constraints).
-- `schema.sql` uses `CREATE TABLE IF NOT EXISTS` + `ALTER TABLE ADD COLUMN IF NOT EXISTS` for backward compatibility with existing H2 files (per CLAUDE.md §4 "idempotent DDL" pattern).
+- New `conversation` table (7 columns) and `message` table (5 columns + 1 CHECK constraint + 1 FK).
+- `schema.sql` uses `CREATE TABLE IF NOT EXISTS` + `ALTER TABLE ADD CONSTRAINT IF NOT EXISTS` for backward compatibility with existing H2 files (per CLAUDE.md §4 "idempotent DDL" pattern).
 
-### API changes (breaking)
-- `POST /api/chat` removed.
+### API changes (breaking, partially deviated after implementation)
+- `POST /api/chat` removed (original plan). **Implementation deviation → kept as deprecated alias** with response header `Deprecation: true` + `Warning: 299`; preserves compatibility for old curl scripts and external callers; removal date TBD.
 - 11 new endpoints (see design summary §2), all auth-required.
 - `ChatController` splits into `ConversationController` + `MessageController`.
 
@@ -112,8 +112,15 @@ MyAi's original `POST /api/chat` was stateless: each call submitted a single mes
 - Backend: `spring-ai-openai` / `spring-ai-ollama` / `spring-ai-anthropic` `stream()` APIs (already in pom, no new deps).
 - Frontend: `marked` or `markdown-it`, `highlight.js`, `KaTeX`, `DOMPurify`. ~400KB min+gz total.
 
-### New error codes
-- 4030 (default Key unavailable), 4031 (conversation not found / deleted), 4032 (message not found / wrong user), 4033 (edit target not USER), 4034 (regenerate target not ASSISTANT).
+### New error codes (implementation deviation)
+- Original plan: 4030 = default Key unavailable; 4031-4034 = conversation / message related.
+- **Implementation deviation**: 4030 was already occupied by `BizException.FORBIDDEN` (`GlobalExceptionHandler.AccessDeniedException` + `UserController.requireOwner` + `UserApiKeyController.requireOwner` + `ChatController` deprecated alias). Added **4035 = `DEFAULT_KEY_UNAVAILABLE`** to take over; 4031-4034 unchanged.
+- Full table in `.claude/api.md` §5.3.
+
+### PATCH edit semantics (implementation deviation)
+- Original plan: "user edits a USER message → that message and all messages after marked `is_orphaned = TRUE` → AI re-runs with new content + all non-orphaned messages before that message".
+- **Implementation deviation → only mark orphans, do NOT auto-re-run AI**. User must actively "send a new message" or click "regenerate" on an ASSISTANT message to let the AI see new content (matches ChatGPT default behavior). Rationale: auto-rerun would destructively overwrite user's edit intent on subsequent ASSISTANT messages.
+- Implementation: `MessageService.edit` (`MessageService.java`) only does UPDATE content + markOrphansAfter + touchConversation, **does not** call AI.
 
 ### UI changes
 - `App.vue` evolves from "four-panel single SFC" to "left sidebar + main area + top menu / bottom drawer". Still single-file; no vue-router.
