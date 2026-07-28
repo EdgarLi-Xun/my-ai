@@ -16,6 +16,7 @@ import org.springframework.ai.chat.client.ChatClient;
 import org.springframework.ai.chat.messages.AssistantMessage;
 import org.springframework.ai.chat.messages.SystemMessage;
 import org.springframework.ai.chat.messages.UserMessage;
+import org.springframework.ai.chat.metadata.Usage;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 import org.springframework.web.servlet.mvc.method.annotation.SseEmitter;
@@ -29,6 +30,8 @@ import java.util.Map;
 import java.util.Objects;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.TimeUnit;
+import java.util.concurrent.atomic.AtomicLong;
+import java.util.concurrent.atomic.AtomicReference;
 
 /**
  * 消息收发服务（ADR 0003）。
@@ -64,17 +67,20 @@ public class MessageService {
     private final UserMapper userMapper;
     private final UserApiKeyService keyService;
     private final ChatClientFactory chatClientFactory;
+    private final AiCallLogService aiCallLogService;
 
     public MessageService(MessageMapper messageMapper,
                           ConversationMapper conversationMapper,
                           UserMapper userMapper,
                           UserApiKeyService keyService,
-                          ChatClientFactory chatClientFactory) {
+                          ChatClientFactory chatClientFactory,
+                          AiCallLogService aiCallLogService) {
         this.messageMapper = messageMapper;
         this.conversationMapper = conversationMapper;
         this.userMapper = userMapper;
         this.keyService = keyService;
         this.chatClientFactory = chatClientFactory;
+        this.aiCallLogService = aiCallLogService;
     }
 
     // ============ 列表 / 编辑 ============
@@ -147,28 +153,62 @@ public class MessageService {
                 && Message.ROLE_USER.equals(context.get(0).getRole());
 
         // 阶段 2：AI 流式（无事务）
+        // ADR 0004 §3：用 stream().chatResponse() 而非 stream().content()，
+        // 从 ChatResponse.getMetadata().getUsage() 拿 input/output tokens。
         StringBuilder buf = new StringBuilder();
-        Flux<String> flux = client.prompt()
+        AtomicLong callStart = new AtomicLong(System.currentTimeMillis());
+        AtomicReference<Integer> inputTokensRef = new AtomicReference<>();
+        AtomicReference<Integer> outputTokensRef = new AtomicReference<>();
+        Flux<org.springframework.ai.chat.model.ChatResponse> flux = client.prompt()
                 .messages(toSpringAiMessages(context))
                 .stream()
-                .content();
+                .chatResponse();
 
         Disposable subscription = flux.subscribe(
-                token -> {
-                    buf.append(token);
-                    sendEvent(emitter, "token", Map.of("text", token));
+                chatResponse -> {
+                    // token 文本（Spring AI 2.x：chatResponse.getResult().getOutput().getText()）
+                    String token = extractTokenText(chatResponse);
+                    if (token != null && !token.isEmpty()) {
+                        buf.append(token);
+                        sendEvent(emitter, "token", Map.of("text", token));
+                    }
+                    // usage：Spring AI 在最后一个 ChatResponse 上提供 metadata
+                    Usage usage = chatResponse.getMetadata() == null ? null : chatResponse.getMetadata().getUsage();
+                    if (usage != null) {
+                        if (usage.getPromptTokens() != null) {
+                            inputTokensRef.set(usage.getPromptTokens());
+                        }
+                        if (usage.getCompletionTokens() != null) {
+                            outputTokensRef.set(usage.getCompletionTokens());
+                        }
+                    }
                 },
                 err -> {
+                    long latency = System.currentTimeMillis() - callStart.get();
                     log.warn("AI stream error for user={}, conversation={}", userId, conversationId, err);
+                    // ADR 0004 §3：失败也写 ai_call_log，便于排查
+                    try {
+                        aiCallLogService.recordFailure(userId, conversationId, null,
+                                key.getProvider(), key.getModelName(), latency,
+                                err.getMessage() == null ? "AI 调用失败" : err.getMessage());
+                    } catch (Exception logEx) {
+                        log.warn("Failed to record ai_call_log (failure)", logEx);
+                    }
                     sendEvent(emitter, "error", Map.of(
                             "code", 5000,
                             "message", err.getMessage() == null ? "AI 调用失败" : err.getMessage()));
                     emitter.completeWithError(err);
                 },
                 () -> {
+                    long latency = System.currentTimeMillis() - callStart.get();
                     // 阶段 3：落库（短事务）
+                    Message assistant = null;
                     try {
-                        Message assistant = insertAssistantMessage(conversationId, buf.toString());
+                        assistant = insertAssistantMessage(conversationId, buf.toString());
+                        // ADR 0004 §3：成功后写 ai_call_log，含 tokens
+                        aiCallLogService.recordSuccess(userId, conversationId, assistant.getId(),
+                                key.getProvider(), key.getModelName(), latency,
+                                inputTokensRef.get(), outputTokensRef.get());
                         sendEvent(emitter, "done", Map.of(
                                 "messageId", assistant.getId(),
                                 "conversationId", conversationId));
@@ -180,7 +220,7 @@ public class MessageService {
                     } finally {
                         // 阶段 4：异步触发 AI 标题生成（仅首条 USER 消息）
                         // 用 CompletableFuture 防止阻塞 SSE done 事件。
-                        if (isFirstUserMessage) {
+                        if (isFirstUserMessage && assistant != null) {
                             final String userContent = validatedContent;
                             CompletableFuture.runAsync(
                                     () -> maybeAutoTitle(userId, conversationId, userContent));
@@ -245,28 +285,55 @@ public class MessageService {
 
         Long conversationId = target.getConversationId();
         StringBuilder buf = new StringBuilder();
-        Flux<String> flux = client.prompt()
+        AtomicLong callStart = new AtomicLong(System.currentTimeMillis());
+        AtomicReference<Integer> inputTokensRef = new AtomicReference<>();
+        AtomicReference<Integer> outputTokensRef = new AtomicReference<>();
+        Flux<org.springframework.ai.chat.model.ChatResponse> flux = client.prompt()
                 .messages(toSpringAiMessages(context))
                 .stream()
-                .content();
+                .chatResponse();
 
         Disposable subscription = flux.subscribe(
-                token -> {
-                    buf.append(token);
-                    sendEvent(emitter, "token", Map.of("text", token));
+                chatResponse -> {
+                    String token = extractTokenText(chatResponse);
+                    if (token != null && !token.isEmpty()) {
+                        buf.append(token);
+                        sendEvent(emitter, "token", Map.of("text", token));
+                    }
+                    Usage usage = chatResponse.getMetadata() == null ? null : chatResponse.getMetadata().getUsage();
+                    if (usage != null) {
+                        if (usage.getPromptTokens() != null) {
+                            inputTokensRef.set(usage.getPromptTokens());
+                        }
+                        if (usage.getCompletionTokens() != null) {
+                            outputTokensRef.set(usage.getCompletionTokens());
+                        }
+                    }
                 },
                 err -> {
+                    long latency = System.currentTimeMillis() - callStart.get();
                     log.warn("AI stream error during regenerate for user={}, message={}", userId, messageId, err);
+                    try {
+                        aiCallLogService.recordFailure(userId, conversationId, target.getId(),
+                                key.getProvider(), key.getModelName(), latency,
+                                err.getMessage() == null ? "AI 调用失败" : err.getMessage());
+                    } catch (Exception logEx) {
+                        log.warn("Failed to record ai_call_log (regenerate failure)", logEx);
+                    }
                     sendEvent(emitter, "error", Map.of(
                             "code", 5000,
                             "message", err.getMessage() == null ? "AI 调用失败" : err.getMessage()));
                     emitter.completeWithError(err);
                 },
                 () -> {
+                    long latency = System.currentTimeMillis() - callStart.get();
                     try {
                         // 把旧 ASSISTANT 标 orphan，插新行
                         messageMapper.markOrphan(target.getId());
                         Message assistant = insertAssistantMessage(conversationId, buf.toString());
+                        aiCallLogService.recordSuccess(userId, conversationId, assistant.getId(),
+                                key.getProvider(), key.getModelName(), latency,
+                                inputTokensRef.get(), outputTokensRef.get());
                         sendEvent(emitter, "done", Map.of(
                                 "messageId", assistant.getId(),
                                 "conversationId", conversationId));
@@ -490,6 +557,21 @@ public class MessageService {
                 msg.getContent(),
                 Boolean.TRUE.equals(msg.getIsOrphaned()),
                 msg.getCreatedAt());
+    }
+
+    private static String extractTokenText(org.springframework.ai.chat.model.ChatResponse chatResponse) {
+        if (chatResponse == null) {
+            return null;
+        }
+        org.springframework.ai.chat.model.Generation generation = chatResponse.getResult();
+        if (generation == null) {
+            return null;
+        }
+        AssistantMessage output = generation.getOutput();
+        if (output == null) {
+            return null;
+        }
+        return output.getText();
     }
 
     private static org.springframework.ai.chat.messages.Message[] toSpringAiMessages(List<Message> messages) {
