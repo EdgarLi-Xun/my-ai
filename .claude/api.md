@@ -21,8 +21,9 @@
 | `4000` | 请求参数错误 | `BizException.badRequest`、`HttpMessageNotReadableException`、`MethodArgumentTypeMismatchException`、`MissingServletRequestParameterException`、`HttpRequestMethodNotSupportedException` |
 | `4010` | 未登录 | 未带 JWT 或 JWT 过期/无效；由 `RestAuthenticationEntryPoint` 或 `AuthenticationException` 返回 |
 | `4030` | 无权访问 | 已登录但试图操作其他用户的资源；由 `RestAccessDeniedHandler` 或 `BizException.forbidden` 返回 |
+| `4035` | 默认 Key 不可用 | ADR 0003；由 `BizException.defaultKeyUnavailable` 返回。详见 §5.3 |
 | `4040` | 资源不存在 | `BizException.notFound`、`NoResourceFoundException`（接口路径不存在也走这里） |
-| `4090` | 业务冲突 | 用户没有可用默认 Key（`/api/chat` 调用前）；邮箱已被注册 |
+| `4090` | 业务冲突 | 邮箱已被注册等；**注意**：原 `/api/chat` 旧实现曾用 4090 表达"无默认 Key"，已迁移到 4035（见 §4） |
 | `5020` | 上游错误 | 预留（`BizException.upstream`，当前未触发） |
 | `5000` | 服务异常 | 其他未捕获异常（`GlobalExceptionHandler` 兜底） |
 

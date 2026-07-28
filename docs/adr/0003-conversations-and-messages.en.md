@@ -25,8 +25,9 @@ MyAi's original `POST /api/chat` was stateless: each call submitted a single mes
 - Conversations are isolated: conversation A's messages never leak into conversation B's prompt.
 
 ### 4. Edit and regenerate via `is_orphaned` soft-mark
-- User edits a USER message → all later messages get `is_orphaned = TRUE` → AI re-runs with the new content + the conversation's pre-edit non-orphaned history.
-- User clicks "regenerate" on an ASSISTANT message → AI re-runs with the same history, the new reply overwrites the old (old gets `is_orphaned = TRUE`).
+- User edits a USER message → that message and **all later messages** are marked `is_orphaned = TRUE` (including the edited one itself, since new content replaces old) → AI does **NOT** auto re-run.
+- **Implementation deviation**: AI re-run requires the user to actively "send a new message" or click "regenerate" on an ASSISTANT message. Rationale: auto-rerun would destructively overwrite the user's edit intent on subsequent ASSISTANT messages (matches ChatGPT default). Implementation: `MessageService.edit` only does UPDATE content + `markOrphansAfter` + `touchConversation` — does **not** call AI.
+- User clicks "regenerate" on an ASSISTANT message → AI re-runs based on non-orphaned history **before** that message; the new reply is inserted as a new row, and the old ASSISTANT is marked `is_orphaned = TRUE`.
 - Orphaned messages are **not** physically deleted; they remain in the DB so users can regenerate back to an earlier branch.
 
 ### 5. Streaming output + reconnect (SSE)
@@ -41,10 +42,11 @@ MyAi's original `POST /api/chat` was stateless: each call submitted a single mes
 - No backend SSE channel needed; pure client-side cross-tab communication.
 - Fallback: on `visibilitychange` and conversation switch, refetch from server.
 
-### 7. Default Key unavailable → 4030 + UI引导
-- Server detects `User.default_key_id IS NULL` / pointing to disabled Key / Key misconfigured → throws `BizException(code=4030)`.
-- Client recognises 4030 → toast + "Go to settings" button that opens the Key manager.
+### 7. Default Key unavailable → 4035 + UI引导
+- Server detects `User.default_key_id IS NULL` / pointing to disabled Key / Key misconfigured → throws `BizException(code=4035)`.
+- Client recognises 4035 → toast + "Go to settings" button that opens the Key manager.
 - Preserves CLAUDE.md §4.6's existing rule "default Key management lives in `UserApiKeyService`" — no auto-fallback to the first enabled Key.
+- **Implementation deviation**: original plan used 4030, but 4030 was already occupied by `BizException.FORBIDDEN` (cross-user operations) — reusing it would collide with "access denied" semantics. The new code `4035 = DEFAULT_KEY_UNAVAILABLE` was added; see `BizException.java`.
 
 ### 8. Soft delete + 30-day auto-cleanup
 - `DELETE /api/conversations/{id}` → `deleted_at = NOW()`. No physical delete.
@@ -112,15 +114,13 @@ MyAi's original `POST /api/chat` was stateless: each call submitted a single mes
 - Backend: `spring-ai-openai` / `spring-ai-ollama` / `spring-ai-anthropic` `stream()` APIs (already in pom, no new deps).
 - Frontend: `marked` or `markdown-it`, `highlight.js`, `KaTeX`, `DOMPurify`. ~400KB min+gz total.
 
-### New error codes (implementation deviation)
-- Original plan: 4030 = default Key unavailable; 4031-4034 = conversation / message related.
-- **Implementation deviation**: 4030 was already occupied by `BizException.FORBIDDEN` (`GlobalExceptionHandler.AccessDeniedException` + `UserController.requireOwner` + `UserApiKeyController.requireOwner` + `ChatController` deprecated alias). Added **4035 = `DEFAULT_KEY_UNAVAILABLE`** to take over; 4031-4034 unchanged.
+### New error codes
+- See §7 and `BizException.java` constants. Implementation uses 4035 = `DEFAULT_KEY_UNAVAILABLE` instead of the original 4030 plan (4030 was already occupied by FORBIDDEN).
 - Full table in `.claude/api.md` §5.3.
 
-### PATCH edit semantics (implementation deviation)
-- Original plan: "user edits a USER message → that message and all messages after marked `is_orphaned = TRUE` → AI re-runs with new content + all non-orphaned messages before that message".
-- **Implementation deviation → only mark orphans, do NOT auto-re-run AI**. User must actively "send a new message" or click "regenerate" on an ASSISTANT message to let the AI see new content (matches ChatGPT default behavior). Rationale: auto-rerun would destructively overwrite user's edit intent on subsequent ASSISTANT messages.
-- Implementation: `MessageService.edit` (`MessageService.java`) only does UPDATE content + markOrphansAfter + touchConversation, **does not** call AI.
+### PATCH edit semantics
+- See §4. Implementation only marks orphans and does NOT auto re-run the AI; user must actively send a new message or click "regenerate" on an ASSISTANT message.
+- Implementation: `MessageService.edit` (`MessageService.java`) only does UPDATE content + markOrphansAfter + touchConversation — does **not** call AI.
 
 ### UI changes
 - `App.vue` evolves from "four-panel single SFC" to "left sidebar + main area + top menu / bottom drawer". Still single-file; no vue-router.

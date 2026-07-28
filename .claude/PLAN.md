@@ -217,21 +217,36 @@
 | # | 阶段 | 状态 | 关键文件 |
 | --- | --- | --- | --- |
 | 1 | 更新 PLAN.md（本表） | ✅ | `.claude/PLAN.md` |
-| 2 | 阶段 0 地基 | 🚧 | `BizException.java`、`MyAiApplication.java`、`application.yml`、`schema.sql`、`UserApiKeyService.java` |
-| 3 | 阶段 1 实体 + Mapper | ⏳ | `Conversation.java`、`Message.java`、`ConversationMapper.java`、`MessageMapper.java` |
-| 4 | 阶段 2 Service + DTO | ⏳ | `ConversationService.java`、`MessageService.java`、4 个 DTO |
-| 5 | 阶段 3 Controller + ChatController alias | ⏳ | `ConversationController.java`、`MessageController.java`、`ChatController.java` |
-| 6 | 阶段 4 @Scheduled 任务 | ⏳ | `ConversationCleanupTask.java`、`TrashProperties.java` |
-| 7 | 阶段 5 前端 | ⏳ | `App.vue` 重写、`lib/markdown.js`、`lib/sse.js`、`vite.config.js`、`package.json` |
-| 8 | 阶段 6 文档收尾 | ⏳ | `api.md`、`REQUIREMENTS.md`、`CLAUDE.md` §4、ADR 0003 (.md + .en.md)、`PLAN.md` |
+| 2 | 阶段 0 地基 | ✅ | `BizException.java`、`MyAiApplication.java`、`application.yml`、`schema.sql`、`UserApiKeyService.java` |
+| 3 | 阶段 1 实体 + Mapper | ✅ | `Conversation.java`、`Message.java`、`ConversationMapper.java`、`MessageMapper.java` |
+| 4 | 阶段 2 Service + DTO | ✅ | `ConversationService.java`、`MessageService.java`、4 个 DTO |
+| 5 | 阶段 3 Controller + ChatController alias | ✅ | `ConversationController.java`、`MessageController.java`、`ChatController.java` |
+| 6 | 阶段 4 @Scheduled 任务 | ✅ | `ConversationCleanupTask.java`、`TrashProperties.java` |
+| 7 | 阶段 5 前端 | ✅ | `App.vue` 重写、`lib/markdown.js`、`lib/sse.js`、`vite.config.js`、`package.json` |
+| 8 | 阶段 6 文档收尾 | ✅ | `api.md`、`REQUIREMENTS.md`、`CLAUDE.md` §4、ADR 0003 (.md + .en.md)、`PLAN.md` |
 | 9 | 阶段 7 验证 | ✅ | `mvn -DskipTests package` 通过；`cd frontend && npm run build` 通过（1.4MB minified / 483KB gzip）；JAR 117MB 落地到 `target/`；schema.sql 含 `conversation` + `message` 两表 + `message_role_check` CHECK 约束。**运行时烟测跳过**——用户 8032 实例正占用 H2 文件，taskkill 被权限拦截，按用户选择以编译为唯一验证依据。 |
 
-### 显式不做（v1）
+### follow-up 收尾（2026-07-28）
+
+实施期发现与 ADR 原文有 3 处偏离，加上 v1 标题用截断降级、CLAUDE.md token
+持久化表述与代码不一致，已在本轮补齐：
+
+| # | 偏离 / follow-up | 处理 |
+| --- | --- | --- |
+| 1 | ADR §7 错误码：原文写"默认 Key 不可用 → 4030"，实际用 4035 | 修订 ADR 中英文版 §7 + §后果，并补 4035 = `DEFAULT_KEY_UNAVAILABLE` 与 4030 FORBIDDEN 不重叠的理由 |
+| 2 | ADR §4 PATCH edit：原文写"AI 用新内容重新跑"，实际只标 orphan | 修订 ADR 中英文版 §4 + §后果，明确"不自动重跑 AI；用户需主动发送新消息或点重新生成" |
+| 3 | `/api/chat` 保留为 deprecated alias（与 ADR"删旧端点"偏离） | ADR 中英文版 §后果 API 变更段保留原文 + 现状说明，下架时间未定 |
+| 4 | v1 自动标题 = 截断降级（偏离 Q5=D） | 实现 v2：`MessageService.maybeAutoTitle` + `generateAiTitle`，异步（`CompletableFuture.runAsync`）从 SSE done 回调启动；AI 调用失败回退 truncate；不动 `title_manually_set` flag |
+| 5 | CLAUDE.md §5 / §6 token 持久化表述与代码不一致（App.vue 用 `localStorage` 存 token + active conversation id） | 修订 §5 与 §6，明确键 `myai.token` / `myai.activeConversationId`、4010 / 登出时清除 |
+| 6 | api.md §0.5 错误码表 4090 描述里写了"用户没有可用默认 Key"，已迁到 4035 | 同步 api.md：在 §0.5 表加 4035 行；4090 行加迁移说明 |
+
+验证：`mvn -DskipTests clean compile` 通过（50 源文件），未运行端到端
+HTTP 烟测（与第 13 次原阶段 7 同约束）。
+
+### 显式不做（v1 / 永不做）
 - 续传实现
-- AI 自动起标题（用截断降级，标 follow-up）
 - 图片上传
 - SYSTEM 消息 UI 输入
-- CLAUDE.md §5 关于 token "会话级不持久化" 的事实修正（与代码不一致，非本次范围）
 - `/api/chat` 下架（保留为 alias；下一轮移除）
 
 ---

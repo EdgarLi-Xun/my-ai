@@ -25,8 +25,9 @@ MyAi 原 `/api/chat` 是无状态的：每次调用只把当前消息丢给 AI�
 - 不同对话之间互不干扰（对话 A 的消息不会进入对话 B 的 prompt）。
 
 ### 4. 编辑与重新生成（`is_orphaned` 软标记）
-- 用户编辑一条 USER 消息 → 该消息之后所有消息标 `is_orphaned = TRUE` → AI 用新内容 + 该消息之前的全部未作废消息重新跑。
-- 用户点 ASSISTANT 消息的"重新生成" → 用同样的历史重新调 AI，新回复覆盖旧的（旧的标 `is_orphaned = TRUE`）。
+- 用户编辑一条 USER 消息 → 该消息**及之后所有**消息标 `is_orphaned = TRUE`（含自己，因新内容替换了旧内容）→ **不**自动重跑 AI。
+- **实施期偏移**：AI 重跑需用户主动"发送新消息"或点 ASSISTANT 消息的"重新生成"。理由：自动重跑会覆盖性破坏用户在后续 ASSISTANT 上的编辑意图（与 ChatGPT 默认行为一致）。落地代码：`MessageService.edit` 仅 UPDATE content + `markOrphansAfter` + `touchConversation`，**不**调 AI。
+- 用户点 ASSISTANT 消息的"重新生成" → 基于该消息之前的未作废 history 重新调 AI，新回复作为新行插入；旧 ASSISTANT 标 `is_orphaned = TRUE`。
 - **不**物理删除被作废的消息，保留在 DB 用于"如果想回到旧版本可以重新生成"。
 
 ### 5. 流式输出 + 续传（SSE）
@@ -42,9 +43,10 @@ MyAi 原 `/api/chat` 是无状态的：每次调用只把当前消息丢给 AI�
 - Fallback：`visibilitychange` 与切 conversation 时从 server 拉最新。
 
 ### 7. 默认 Key 不可用 → 报错 + 引导
-- 服务端检测 `User.default_key_id IS NULL` / 指向 disabled Key / Key 配置无效 → 抛 `BizException(code=4030)`。
-- 前端识别 4030 → toast + "去设置" 按钮跳转 Key 管理。
+- 服务端检测 `User.default_key_id IS NULL` / 指向 disabled Key / Key 配置无效 → 抛 `BizException(code=4035)`。
+- 前端识别 4035 → toast + "去设置" 按钮跳转 Key 管理。
 - 沿用 CLAUDE.md 4.6 节"默认 Key 规则集中在 `UserApiKeyService`"现状，不引入"自动 fallback 到第一个 enabled Key"。
+- **实施期偏移说明**：原计划用 4030，但 4030 已被 `BizException.FORBIDDEN` 占用（跨用户操作），复用会与"无权访问"语义重叠；改用新增的 4035 = `DEFAULT_KEY_UNAVAILABLE`，见 `BizException.java`。
 
 ### 8. 软删 + 30 天自动清理
 - `DELETE /api/conversations/{id}` → `deleted_at = NOW()`，不真删。
@@ -112,14 +114,12 @@ MyAi 原 `/api/chat` 是无状态的：每次调用只把当前消息丢给 AI�
 - 后端：`spring-ai-openai` / `spring-ai-ollama` / `spring-ai-anthropic` 的 `stream()` API（已有依赖，不用新增）。
 - 前端：`marked` + `markdown-it` 二选一、`highlight.js`、`KaTeX`、`DOMPurify`。总计 ~400KB min+gz。
 
-### 错误码新增（实施期偏离）
-- 原计划：4030 = 默认 Key 不可用；4031-4034 = 对话 / 消息相关。
-- **实施期偏离**：4030 已被 `BizException.FORBIDDEN` 占用（`GlobalExceptionHandler.AccessDeniedException` + `UserController.requireOwner` + `UserApiKeyController.requireOwner` + `ChatController` deprecated alias）。新增 **4035 = `DEFAULT_KEY_UNAVAILABLE`** 接管；4031-4034 不变。
+### 错误码新增
+- 详见 §7 与 `BizException.java` 常量定义。实施期用 4035 = `DEFAULT_KEY_UNAVAILABLE` 取代原计划的 4030（4030 已被 FORBIDDEN 占用）。
 - 完整码表见 `.claude/api.md` §5.3。
 
-### PATCH edit 语义（实施期偏离）
-- 原计划："用户编辑一条 USER 消息 → 该消息之后所有消息标 `is_orphaned = TRUE` → AI 用新内容 + 该消息之前的全部未作废消息重新跑"。
-- **实施期偏离 → 仅标 orphan，不自动重跑 AI**。用户必须主动"发送新消息"或点 ASSISTANT 的"重新生成"才让 AI 看到新内容（与 ChatGPT 默认行为一致）。理由：自动重跑会覆盖性破坏用户在后续 ASSISTANT 上的编辑意图。
+### PATCH edit 语义
+- 详见 §4。实施期仅标 orphan、不自动重跑 AI；用户需主动发送新消息或点 ASSISTANT 的"重新生成"。
 - 落地代码：`MessageService.edit`（`MessageService.java`）只做 UPDATE content + markOrphansAfter + touchConversation，**不**调 AI。
 
 ### UI 变更

@@ -109,7 +109,7 @@ idx_user_api_key_user_id on (user_id)
 ## 5. 前端架构
 
 - 单 SFC `App.vue` 承担登录/注册、用户、Key、聊天四个面板；新增 `auth-overlay` + `token` state 取代旧版"无认证直入"。
-- JWT token 只存在组件内存中，刷新页面即需重新登录（仅本地开发会话级，未持久化到 localStorage）。
+- JWT token 与活跃会话 id 持久化在浏览器 `localStorage`（键 `myai.token` / `myai.activeConversationId`，见 §6）。启动时 `App.vue` 先读 `myai.token`，有则直接进；无则弹 `auth-overlay`。4010 或主动登出会清掉两者。
 - 所有 API 调用经 `App.vue` 的 `fetch` 封装；`Authorization: Bearer <token>` 由组件统一注入；`/api/auth/me` 启动时用于恢复当前用户。
 - Vite 配置代理 `/api` 到后端 8031（参见 `frontend/vite.config.js`）。
 
@@ -117,7 +117,8 @@ idx_user_api_key_user_id on (user_id)
 
 ## 6. 安全边界（开发时遵守）
 
-- **认证已加**：JWT 鉴权已上线，但仍是单机本地应用，Token 无刷新机制、明文存于会话内存，不要把该版本直接暴露到公网。
+- **认证已加**：JWT 鉴权已上线，但仍是单机本地应用，Token 无刷新机制、明文存于浏览器 `localStorage`（键 `myai.token`）—— 同源 JS 可读、非 HttpOnly cookie、非会话级；活跃会话 id 也存 `localStorage`（键 `myai.activeConversationId`）。不要把该版本直接暴露到公网。
+- 4010 / 主动登出会清掉 `myai.token` 与 `myai.activeConversationId`。
 - **API Key 明文** 存于本机 H2 文件；**不会**通过 API、`toString()`、MyBatis 参数日志输出。
 - **自定义 baseUrl** 会让后端对用户填写的地址发起出站请求（SSRF 风险）。不要把该能力暴露给不可信用户。
 - 未实现加密、审计、轮换、配额、生产级多租户隔离。
