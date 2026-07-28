@@ -376,3 +376,63 @@ HTTP 烟测（与第 13 次原阶段 7 同约束）。
 | 8 | 文档 | ✅ | api.md（§6）、CLAUDE.md（§4 + §6）、REQUIREMENTS.md（1.9） |
 | 9 | 验证 | ✅ | mvn -DskipTests package 通过（5.4s，BUILD SUCCESS），JAR 落地 target/ |
 
+### 已知事实修正
+- PLAN 验证事实里写的"`spring-boot-starter-aop` **必须**加到 pom"与 Spring Boot 4 实际不符——该 starter 在 Spring Boot 4.0 已移除；正确做法是直接依赖 `org.aspectj:aspectjweaver`（BOM 管版本）。已在实施期修正。
+
+---
+
+## 第 15 次对话（2026-07-28）— 🚧 设计定稿（ADR 已写，待用户通知执行）
+
+### 目标
+把仓库从"几乎三层但有几处偏离"演进为**严格教科书式三层架构**，并落地"XML mapper + 全仓双语注释"两项补充要求。本轮**只写设计文档**，不写业务代码。
+
+### 背景
+- 用户原始诉求："去除 jpa,采用 mybatis-flex,改为 传统三层架构模式"
+- 事实：仓库已在用 MyBatis-Flex 1.11.8，零 JPA 痕迹；`FlexConfig` 已预留 XML mapper 扫描路径（`classpath:cn/edgarli/mapper/**/*.xml`），但目录为空
+- 用户后续补充：
+  - "有 service 但是没有 实现类"（Service 应接口与实现分离）
+  - "注释需要针对到函数，参数，局部参数"（覆盖全仓）
+  - "mapper.xml 也要添加"（重构中引入 XML）
+  - "注释语言改为中英文吧"（每行完全双语，中文 + 英文同行）
+
+### 关键决策（/grill-with-docs 12 决策全落定）
+| # | 决策 | 选 |
+| --- | --- | --- |
+| 1 | ORM | **不动**（MyBatis-Flex 1.11.8） |
+| 2 | Service 命名 | 同名接口 + Impl 后缀（`UserService` + `UserServiceImpl`） |
+| 3 | MessageService 拆 | **Query + Command + 组合接口**（Controller 注入 1 个组合接口） |
+| 4 | AI 子包归宿 | **`cn.edgarli.service.ai`**（AiService 接口 + 实现） |
+| 5 | 基础设施统一 | `cn.edgarli.infrastructure.{security,config,task,observability,audit}` |
+| 6 | Entity / DTO 分层 | **DO / BO / VO 三层** |
+| 7 | DO 命名 | **加 Do 后缀**（`UserDo` 等 6 个） |
+| 8 | 引入 XML mapper | 是；范围 = Conversation + Message 业务查询全迁 XML |
+| 9 | 注释粒度 | 方法 Javadoc + @param + 局部变量 // |
+| 10 | 注释覆盖 | 全仓所有 Java 源文件 + 2 个 XML |
+| 11 | 注释语言 | **每行完全双语**（中文 + 英文同行） |
+| 12 | 转换层 | `cn.edgarli.web.converter`（手动 converter，不引 MapStruct） |
+
+### 落地产物
+- `docs/adr/0005-three-layer-architecture.md`（中文）
+- `docs/adr/0005-three-layer-architecture.en.md`（英文）
+- 本 PLAN.md 第 15 次对话段
+
+### 子步骤
+
+| # | 阶段 | 状态 |
+| --- | --- | --- |
+| 0 | ADR 0005 中英文版 | ✅ |
+| 1 | PLAN.md（本表） | ✅ |
+| 2 | 阶段 A：基础设施搬迁（security/config/task/observability/audit → `infrastructure`） | ⏳ 待用户通知 |
+| 3 | 阶段 B：Service 接口/Impl 分离 + AI 子包重构（拆 MessageService + 引入 AiService） | ⏳ |
+| 4 | 阶段 C：DO/BO/VO 分层（6 entity → Do 后缀；补 VO；补 converter；补 BO） | ⏳ |
+| 5 | 阶段 D：Conversation + Message XML mapper 迁移（2 个 XML） | ⏳ |
+| 6 | 阶段 E：全仓注释补齐（方法 Javadoc + @param + 局部 //，双语） | ⏳ |
+
+### 显式不做
+- 不引入 MapStruct（手动 converter 够用）
+- 不做 ORM 切换（已是 MyBatis-Flex）
+- 不动 DB schema / API 路径 / 业务码
+- 不重写 service 业务逻辑（仅接口 / 实现分离）
+
+### 留给用户
+- 阶段 A-E 何时启动（用户明确说"先写到文档里面，后续执行等我通知"）
