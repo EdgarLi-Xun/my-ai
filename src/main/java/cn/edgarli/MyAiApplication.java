@@ -1,5 +1,7 @@
 package cn.edgarli;
 
+import cn.edgarli.config.AdminProperties;
+import cn.edgarli.config.LogProperties;
 import cn.edgarli.config.TrashProperties;
 import cn.edgarli.mapper.UserApiKeyMapper;
 import cn.edgarli.mapper.UserMapper;
@@ -17,7 +19,7 @@ import org.springframework.scheduling.annotation.EnableScheduling;
  */
 @SpringBootApplication
 @EnableScheduling
-@EnableConfigurationProperties(TrashProperties.class)
+@EnableConfigurationProperties({TrashProperties.class, LogProperties.class, AdminProperties.class})
 @MapperScan(basePackages = "cn.edgarli.mapper", annotationClass = Mapper.class)
 public class MyAiApplication {
 

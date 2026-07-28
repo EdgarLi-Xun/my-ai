@@ -13,6 +13,9 @@ import java.io.IOException;
 
 /**
  * 从 Authorization: Bearer <token> 解析 JWT 并设置 SecurityContext。
+ * <p>
+ * 解析两个 claim：{@code uid} 与 {@code role}（ADR 0004）。旧 token 没有
+ * {@code role} 字段时回退 {@link cn.edgarli.entity.User#ROLE_USER}。
  */
 @Component
 public class JwtAuthenticationFilter extends OncePerRequestFilter {
@@ -34,7 +37,8 @@ public class JwtAuthenticationFilter extends OncePerRequestFilter {
             if (jwtService.validate(token)) {
                 Long userId = jwtService.parseUserId(token);
                 if (userId != null) {
-                    AuthPrincipal principal = new AuthPrincipal(userId);
+                    String role = jwtService.parseRole(token);
+                    AuthPrincipal principal = new AuthPrincipal(userId, role);
                     SecurityContextHolder.getContext().setAuthentication(principal);
                 }
             }

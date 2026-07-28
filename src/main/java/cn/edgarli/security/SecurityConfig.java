@@ -48,6 +48,8 @@ public class SecurityConfig {
                         .requestMatchers("/", "/index.html", "/static/**", "/assets/**", "/favicon.ico").permitAll()
                         .requestMatchers("/h2-console/**").permitAll()
                         .requestMatchers("/error").permitAll()
+                        // ADR 0004：日志查询端点仅 admin 可访问
+                        .requestMatchers("/api/logs/**").hasRole("ADMIN")
                         // 其余全部需要登录
                         .anyRequest().authenticated())
                 .addFilterBefore(jwtAuthenticationFilter, UsernamePasswordAuthenticationFilter.class);

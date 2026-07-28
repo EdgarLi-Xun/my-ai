@@ -62,3 +62,52 @@ CREATE INDEX IF NOT EXISTS idx_message_conversation_id ON message(conversation_i
 
 ALTER TABLE message ADD CONSTRAINT IF NOT EXISTS message_role_check
     CHECK (role IN ('USER', 'ASSISTANT', 'SYSTEM'));
+
+-- ADR 0004：可观测性
+-- user.role：RBAC 角色（USER / ADMIN），env var MYAI_ADMIN_EMAILS 命中设 ADMIN。
+ALTER TABLE user ADD COLUMN IF NOT EXISTS role VARCHAR(20) NOT NULL DEFAULT 'USER';
+ALTER TABLE user ADD CONSTRAINT IF NOT EXISTS user_role_check
+    CHECK (role IN ('USER', 'ADMIN'));
+
+-- ai_call_log：每次 AI 调用留痕。tokens 允许 NULL（Ollama 等不一定返回 usage）。
+CREATE TABLE IF NOT EXISTS ai_call_log (
+    id BIGINT AUTO_INCREMENT PRIMARY KEY,
+    user_id BIGINT NOT NULL,
+    conversation_id BIGINT,
+    message_id BIGINT,
+    provider VARCHAR(50) NOT NULL,
+    model VARCHAR(200) NOT NULL,
+    status VARCHAR(20) NOT NULL,
+    latency_ms BIGINT,
+    input_tokens INTEGER,
+    output_tokens INTEGER,
+    error_message TEXT,
+    trace_id VARCHAR(64),
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    CONSTRAINT fk_ai_call_log_user
+        FOREIGN KEY (user_id) REFERENCES user(id) ON DELETE CASCADE
+);
+
+CREATE INDEX IF NOT EXISTS idx_ai_call_log_user_id ON ai_call_log(user_id);
+CREATE INDEX IF NOT EXISTS idx_ai_call_log_created_at ON ai_call_log(created_at);
+CREATE INDEX IF NOT EXISTS idx_ai_call_log_trace_id ON ai_call_log(trace_id);
+
+-- audit_log：业务动作留痕（UserApiKey / Conversation 增删改等）。user_id 允许 NULL（系统后台）。
+-- 默认查询 WHERE deleted_at IS NULL；30 天后 LogCleanupTask 物理删。
+CREATE TABLE IF NOT EXISTS audit_log (
+    id BIGINT AUTO_INCREMENT PRIMARY KEY,
+    user_id BIGINT,
+    action VARCHAR(50) NOT NULL,
+    target_type VARCHAR(50),
+    target_id BIGINT,
+    ip_address VARCHAR(64),
+    user_agent VARCHAR(500),
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    deleted_at TIMESTAMP,
+    CONSTRAINT fk_audit_log_user
+        FOREIGN KEY (user_id) REFERENCES user(id) ON DELETE SET NULL
+);
+
+CREATE INDEX IF NOT EXISTS idx_audit_log_user_id ON audit_log(user_id);
+CREATE INDEX IF NOT EXISTS idx_audit_log_created_at ON audit_log(created_at);
+CREATE INDEX IF NOT EXISTS idx_audit_log_deleted_at ON audit_log(deleted_at);

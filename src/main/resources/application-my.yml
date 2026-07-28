@@ -70,6 +70,15 @@ my-ai:
     # 过期时间（单位秒），默认 7 天
     expiration: ${MYAI_JWT_EXPIRATION:604800}
 
+  # 可观测性：AI 调用日志 / 审计日志保留天数（ADR 0004）
+  logs:
+    retention-days: ${MYAI_LOGS_RETENTION_DAYS:30}
+    access-retention-days: ${MYAI_LOGS_ACCESS_RETENTION_DAYS:30}
+
+  # 管理员名单（ADR 0004）。空 = 无管理员
+  admin:
+    emails: ${MYAI_ADMIN_EMAILS:}
+
 server:
   port: 8032
 
