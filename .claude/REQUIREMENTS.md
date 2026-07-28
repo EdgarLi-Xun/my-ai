@@ -89,6 +89,21 @@
   - 3 「流式输出 / SSE」从「推测无」变为「已实现」。
 - 来源：2026-07-27 `/grill-with-docs` 19 题决策；**代码中尚无任何实现**。
 
+### 1.9 可观测性与日志（已实现 — 2026-07-28）
+- 设计定稿见 ADR `docs/adr/0004-observability.md`：四层日志（AI 调用 + HTTP 访问 + 业务审计 + 系统运行）+ RBAC（USER / ADMIN）+ admin-only 查询 API。
+- 实现证据：
+  - 新表 `ai_call_log`（12 列 + FK + 3 索引）/ `audit_log`（9 列 + FK + 3 索引 + 软删列）。
+  - `ai_call_log` 由 `MessageService.streamReply / regenerate` 在 AI 流式 onComplete / onError 写一行（含 provider / model / status / latency_ms / input_tokens / output_tokens / error_message / trace_id）。
+  - `audit_log` 由 `AuditAspect @Around @Auditable` 在 service 方法成功后写一行（含 action / target_type / target_id / ip_address / user_agent）；UserApiKeyService 4 方法 / ConversationService 5 方法已标注。
+  - HTTP 访问日志：`TraceIdFilter`（Servlet Filter，跑在 Spring Security 之前）只对 `/api/**` 生效；写 `./logs/access.jsonl`（RollingFileAppender，JsonEncoder）；响应头回写 `X-Trace-Id`。
+  - 系统日志：logback-spring.xml 全 JSON 输出到 stdout + `./logs/app.jsonl`；MDC 字段 trace_id / user_id / request_method / request_path / client_ip / conversation_id / message_id。
+  - RBAC：`User.role` 列（USER / ADMIN），`AdminProperties.isAdmin(email)` 在 register / login 时判定；`SecurityConfig` `/api/logs/**` hasRole("ADMIN")。
+  - 查询 API：4 端点 `/api/logs/ai-calls` / `/api/logs/ai-calls/{id}` / `/api/logs/audit` / `/api/logs/audit/{id}`（admin-only，size 上限 200）。
+  - 保留期：`LogCleanupTask` 每天 04:00 跑，`my-ai.logs.retention-days`（默认 30，env var `MYAI_LOGS_RETENTION_DAYS`）；ai_call_log 直接物理删，audit_log 先软删再物理删。
+  - token 计数：`MessageService` 改用 `stream().chatResponse()`，从 `ChatResponse.getMetadata().getUsage()` 读 input/output tokens（nullable，Ollama 等 provider 可能不返回）。
+- admin bootstrap：`my-ai.admin.emails` 绑定 `MYAI_ADMIN_EMAILS` env var（逗号分隔）。无 fallback — env var 没配则系统无管理员，日志 API 任何人都调不通。
+- 来源：2026-07-27 `/grill-with-docs` 20 题决策 + 2026-07-28 第 14 次对话实施。
+
 ## 2. 非功能需求 / 约束
 
 ### 2.1 数据持久化
@@ -121,7 +136,7 @@
 | 认证 / 授权 | 显式无 | README 明示 "没有认证与授权"；当前所有 `/api/*` 端点均无身份校验 |
 | Key 加密 | 显式无 | README 明示 "API Key 明文保存在本机 H2"；未看到任何加密层 |
 | 多租户隔离 | 显式无 | README 明示 "未实现 ... 生产级多租户隔离" |
-| Key 轮换 / 配额 / 审计 | 显式无 | README 明示缺失 |
+| Key 轮换 / 配额 / 审计 | 部分补 | 审计已通过 1.9 落地；Key 轮换 / 配额仍显式无 |
 | 模型客户端缓存 | 推测无 | 代码确认每次请求新建；设计上无任何缓存层 |
 | 流式输出 / SSE | 推测无 | `/api/chat` 调用 `.call().content()` 同步返回；没有任何 streaming 配置 |
 | 国际化 | 推测无 | 前端仅观察到中文文案，未发现 i18n 资源文件 |
@@ -136,3 +151,4 @@
 - `2026-07-23`：初次从 README + 源码反推成文（与项目级 `CLAUDE.md` 同步生成）。
 - `2026-07-24`：新增 1.0.1「微信扫码登录（已设计，未实现）」，对应 ADR 0002。
 - `2026-07-27`：新增 1.8「对话与消息（已设计，未实现）」，对应 ADR 0003；19 题 grilling 决策已落 PLAN.md 第 12 次对话。
+- `2026-07-28`：新增 1.9「可观测性与日志（已实现）」，对应 ADR 0004；20 题 grilling 决策 + 阶段 1-7 实施已落 PLAN.md 第 14 次对话。

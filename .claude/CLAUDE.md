@@ -89,6 +89,13 @@ Maven 不会自动触发 `npm run build`；改前端源码后必须手动构建�
 13. **`updated_at` 显式维护**：H2 不依赖 `ON UPDATE CURRENT_TIMESTAMP`，`MessageService` 在 USER / ASSISTANT 消息插入、edit / regenerate 标 orphan 后显式调 `ConversationMapper.touchUpdatedAt(id)`。漏掉会让侧栏顺序错乱。
 14. **业务码语义不重叠**：4030 = 跨用户拒绝（保留 `FORBIDDEN`）；4035 = 默认 Key 不可用（NULL / disabled / 配置无效）；4031-4034 = 对话 / 消息相关错误。详见 `BizException.java`。
 15. **`POST /api/chat` 已 deprecated**：保留作为兼容 alias，响应头带 `Deprecation: true` + `Warning: 299`；新代码必须用 `POST /api/conversations/{id}/messages`。下架时间未定。
+16. **可观测性四层日志（ADR 0004）**：
+    - `ai_call_log`：`MessageService.streamReply / regenerate` 用 `stream().chatResponse()`，从 `ChatResponse.getMetadata().getUsage()` 取 input/output tokens；onComplete 写 SUCCESS 行，onError 写 FAILURE 行（含 latency_ms + error_message + trace_id）。tokens 允许 NULL（Ollama 等不一定返回 usage）。
+    - `audit_log`：`AuditAspect @Around @Auditable` 拦截 service 方法；proceed() 成功后写一行。target_id 提取先试返回值 `getId()`（Lombok），再试 `id()`（record），最后 fallback 最后 Long 参数。失败抛业务异常 → AuditAspect 不会写（与 `@Transactional` 同事务回滚）。
+    - HTTP 访问日志：`TraceIdFilter` 跑在 Spring Security 之前（`FilterRegistrationBean order=HIGHEST_PRECEDENCE+10`），路径白名单 `/api/**`；注入 MDC `trace_id / request_method / request_path / client_ip / conversation_id / message_id`，finally 阶段从 `SecurityContextHolder` 拿 user_id 注入 MDC；通过 logger `myai.access` 写到 `./logs/access.jsonl`（RollingFileAppender + JsonEncoder）；响应头回写 `X-Trace-Id`。
+    - 系统日志：logback-spring.xml 全 JSON（Logback 1.5+ 内置 `JsonEncoder`），stdout + `./logs/app.jsonl`。
+    - **保留期**：`my-ai.logs.retention-days` 默认 30（env var `MYAI_LOGS_RETENTION_DAYS`）；`LogCleanupTask @Scheduled(cron="0 4 * * * *", zone="Asia/Shanghai")` 每天清理 — ai_call_log 直接物理删 created_at < now-retentionDays，audit_log 先软删 deleted_at = now（created_at < cutoff 且 deleted_at IS NULL），再物理删 deleted_at < now-retentionDays。
+17. **RBAC**：`User.role` = USER / ADMIN；`SecurityConfig` `/api/logs/**` hasRole("ADMIN")；admin 名单由 `AdminProperties.isAdmin(email)` 判定，绑定 env var `MYAI_ADMIN_EMAILS`（逗号分隔）。无 fallback — env var 没配则无管理员，日志 API 任何人都调不通。`JwtService` token claim 同时含 `uid` 与 `role`。
 
 ### 数据模型（与 schema.sql 对齐）
 
@@ -121,7 +128,8 @@ idx_user_api_key_user_id on (user_id)
 - 4010 / 主动登出会清掉 `myai.token` 与 `myai.activeConversationId`。
 - **API Key 明文** 存于本机 H2 文件；**不会**通过 API、`toString()`、MyBatis 参数日志输出。
 - **自定义 baseUrl** 会让后端对用户填写的地址发起出站请求（SSRF 风险）。不要把该能力暴露给不可信用户。
-- 未实现加密、审计、轮换、配额、生产级多租户隔离。
+- 未实现加密、轮换、配额、生产级多租户隔离。**审计已通过 ADR 0004 落地**（`audit_log` 记录 Key / 对话 增删改；仅 admin 可查）。
+- **管理员边界**：admin 角色只能由 env var `MYAI_ADMIN_EMAILS` 授予，注册 / 登录时按邮箱匹配；不可通过 API 自封。日志查询端点 `/api/logs/**` 仅 admin 可访问，普通用户调会得 403。
 
 ## 7. 验证原则（仓库特有补充）
 
