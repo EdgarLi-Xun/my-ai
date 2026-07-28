@@ -26,6 +26,8 @@ import java.io.IOException;
 import java.time.LocalDateTime;
 import java.util.List;
 import java.util.Map;
+import java.util.Objects;
+import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.TimeUnit;
 
 /**
@@ -51,6 +53,11 @@ public class MessageService {
 
     /** 自动标题最大长度。超过截断 + 省略号。 */
     private static final int AUTO_TITLE_MAX = 30;
+
+    /** AI 标题生成 prompt：要求 ≤30 字符，纯文本输出。 */
+    private static final String AUTO_TITLE_PROMPT =
+            "为下列对话生成一个简洁的中文标题，长度不超过 30 个字符（不包含标点符号、引号或前后缀）。"
+                    + "只返回标题文本本身，不要任何解释。\n\n用户：%s";
 
     private final MessageMapper messageMapper;
     private final ConversationMapper conversationMapper;
@@ -135,6 +142,10 @@ public class MessageService {
             return emitter;
         }
 
+        // 是否首条 USER 消息：context 只含刚插入的 USER 条
+        boolean isFirstUserMessage = context.size() == 1
+                && Message.ROLE_USER.equals(context.get(0).getRole());
+
         // 阶段 2：AI 流式（无事务）
         StringBuilder buf = new StringBuilder();
         Flux<String> flux = client.prompt()
@@ -167,6 +178,13 @@ public class MessageService {
                                 "code", 5000,
                                 "message", "回复保存失败"));
                     } finally {
+                        // 阶段 4：异步触发 AI 标题生成（仅首条 USER 消息）
+                        // 用 CompletableFuture 防止阻塞 SSE done 事件。
+                        if (isFirstUserMessage) {
+                            final String userContent = validatedContent;
+                            CompletableFuture.runAsync(
+                                    () -> maybeAutoTitle(userId, conversationId, userContent));
+                        }
                         safeComplete(emitter);
                     }
                 });
@@ -287,14 +305,13 @@ public class MessageService {
     // ============ 内部方法（短事务） ============
 
     /**
-     * 插入 USER 消息 + 触发自动标题 + 触摸 conversation。
-     * 该方法包在事务里，写入完成后立即释放连接。
+     * 插入 USER 消息 + 触摸 conversation。
+     * 该方法包在事务里，写入完成后立即释放连接。自动标题生成由 {@link #streamReply}
+     * 的 done 回调异步触发（v2），不在此处同步阻塞事务。
      */
     @Transactional
     public Message insertUserMessage(Long userId, Long conversationId, String content) {
         requireOwnedConversation(userId, conversationId);
-        // 仅当本对话尚未有任何非作废 USER 消息时，才触发自动标题（避免后续 USER 覆盖首条建立的标题）
-        boolean isFirstUserMessage = !messageMapper.existsNonOrphanedUserMessage(conversationId);
         Message msg = new Message();
         msg.setConversationId(conversationId);
         msg.setRole(Message.ROLE_USER);
@@ -303,9 +320,6 @@ public class MessageService {
         msg.setCreatedAt(LocalDateTime.now());
         messageMapper.insert(msg);
         conversationMapper.touchUpdatedAt(conversationId);
-        if (isFirstUserMessage) {
-            maybeAutoTitle(conversationId, content);
-        }
         return msg;
     }
 
@@ -326,23 +340,75 @@ public class MessageService {
     }
 
     /**
-     * 当对话标题还没被用户手动改过时，用首条 USER 消息的内容截断覆盖标题。
+     * v2 自动标题：用 AI 摘要首条 USER 消息生成 ≤30 字标题（PLAN §12 Q5=D 实施版）。
+     * <p>
+     * 行为：
+     * <ul>
+     *   <li>对话已被用户手动改过标题（{@code titleManuallySet = TRUE}）→ 不动</li>
+     *   <li>对话所有权不匹配 → 不动</li>
+     *   <li>首条 USER 内容为空 → 不动</li>
+     *   <li>AI 调用成功 → 用 AI 输出（去引号 / 截断）覆盖 title</li>
+     *   <li>AI 抛错 / 空响应 → 回退到 {@link #truncate} 截断首条 USER 消息</li>
+     * </ul>
+     * 该方法在异步线程执行（{@link #streamReply} done 回调里启动的
+     * {@code CompletableFuture.runAsync}），调用方不阻塞 SSE 主路径。
+     * <p>
+     * 注意：直接 {@code UpdateChain} 只更新 {@code title}，**不**翻
+     * {@code titleManuallySet} flag——这样下次"首条 USER"语义不会误改用户手动改过的标题。
      */
-    private void maybeAutoTitle(Long conversationId, String firstUserContent) {
+    private void maybeAutoTitle(Long userId, Long conversationId, String firstUserContent) {
+        if (firstUserContent == null || firstUserContent.isBlank()) {
+            return;
+        }
         Conversation conv = conversationMapper.selectOneById(conversationId);
         if (conv == null || Boolean.TRUE.equals(conv.getTitleManuallySet())) {
             return;
         }
-        String title = truncate(firstUserContent, AUTO_TITLE_MAX);
+        if (!Objects.equals(conv.getUserId(), userId)) {
+            log.warn("Auto-title aborted: conversation {} not owned by user {}", conversationId, userId);
+            return;
+        }
+
+        // v2：先 AI 摘要；失败回退 truncate
+        String title = generateAiTitle(userId, firstUserContent);
+        if (title == null || title.isBlank()) {
+            title = truncate(firstUserContent, AUTO_TITLE_MAX);
+        }
         if (title.isEmpty()) {
             return;
         }
-        // 注意：updateTitle 会把 title_manually_set 设为 TRUE。这里需要特例：
-        // 用 UpdateChain 直接更新 title 而不动 manually_set flag。
+
         com.mybatisflex.core.update.UpdateChain.of(conversationMapper)
                 .set(Conversation::getTitle, title)
                 .where(Conversation::getId).eq(conversationId)
                 .update();
+        log.debug("Auto-title for conversation {}: '{}'", conversationId, title);
+    }
+
+    /**
+     * 调默认 Key 对应的 ChatClient 生成标题。返回已清洗后的纯文本标题；调用失败
+     * （含 4035 默认 Key 不可用、AI provider 异常、空响应）一律返回 {@code null}，
+     * 由 {@link #maybeAutoTitle} 回退到 {@link #truncate}。
+     */
+    private String generateAiTitle(Long userId, String firstUserContent) {
+        try {
+            UserApiKey key = keyService.getDefaultForChat(userId);
+            ChatClient client = chatClientFactory.getClient(key);
+            String prompt = String.format(AUTO_TITLE_PROMPT, firstUserContent);
+            String generated = client.prompt().user(prompt).call().content();
+            if (generated == null) {
+                return null;
+            }
+            // 去掉常见引号 / 标点装饰
+            String cleaned = generated.trim().replaceAll("[\"''`「」『』《》]", "");
+            if (cleaned.isEmpty()) {
+                return null;
+            }
+            return truncate(cleaned, AUTO_TITLE_MAX);
+        } catch (Exception ex) {
+            log.warn("AI title generation failed for user={}: {}", userId, ex.toString());
+            return null;
+        }
     }
 
     // ============ helpers ============
