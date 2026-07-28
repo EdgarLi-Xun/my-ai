@@ -1,0 +1,65 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+  ADR 0004 系统日志配置：
+  - 控制台 / app.jsonl 用 ch.qos.logback.classic.encoder.JsonEncoder（Logback 1.5+ 内置）
+  - access.jsonl 走独立 logger "myai.access"，additivity=false；由 TraceIdFilter 主动写
+  - MDC 字段：trace_id / user_id / conversation_id / request_method / request_path / client_ip
+-->
+<configuration scan="true" scanPeriod="30 seconds">
+
+    <springProperty scope="context" name="APP_NAME" source="spring.application.name" defaultValue="myAi"/>
+    <!-- access.jsonl 保留天数由 my-ai.logs.access-retention-days 控制；LogProperties 注入 -->
+    <springProperty scope="context" name="ACCESS_MAX_HISTORY"
+                    source="my-ai.logs.access-retention-days" defaultValue="30"/>
+
+    <!-- ===== Appender 1：stdout（控制台） ===== -->
+    <appender name="STDOUT" class="ch.qos.logback.core.ConsoleAppender">
+        <encoder class="ch.qos.logback.classic.encoder.JsonEncoder">
+            <timestampPattern>yyyy-MM-dd'T'HH:mm:ss.SSSXXX</timestampPattern>
+        </encoder>
+    </appender>
+
+    <!-- ===== Appender 2：app.jsonl（系统日志） ===== -->
+    <appender name="APP_FILE" class="ch.qos.logback.core.rolling.RollingFileAppender">
+        <file>./logs/app.jsonl</file>
+        <rollingPolicy class="ch.qos.logback.core.rolling.SizeAndTimeBasedRollingPolicy">
+            <fileNamePattern>./logs/app.%d{yyyy-MM-dd}.%i.jsonl</fileNamePattern>
+            <maxFileSize>50MB</maxFileSize>
+            <maxHistory>30</maxHistory>
+            <totalSizeCap>2GB</totalSizeCap>
+        </rollingPolicy>
+        <encoder class="ch.qos.logback.classic.encoder.JsonEncoder">
+            <timestampPattern>yyyy-MM-dd'T'HH:mm:ss.SSSXXX</timestampPattern>
+        </encoder>
+    </appender>
+
+    <!-- ===== Appender 3：access.jsonl（HTTP 访问日志）=====
+         只接收 logger name = "myai.access" 的事件；由 TraceIdFilter 主动 logger.info(...) 输出
+    -->
+    <appender name="ACCESS_FILE" class="ch.qos.logback.core.rolling.RollingFileAppender">
+        <file>./logs/access.jsonl</file>
+        <rollingPolicy class="ch.qos.logback.core.rolling.SizeAndTimeBasedRollingPolicy">
+            <fileNamePattern>./logs/access.%d{yyyy-MM-dd}.%i.jsonl</fileNamePattern>
+            <maxFileSize>50MB</maxFileSize>
+            <maxHistory>${ACCESS_MAX_HISTORY}</maxHistory>
+            <totalSizeCap>2GB</totalSizeCap>
+        </rollingPolicy>
+        <encoder class="ch.qos.logback.classic.encoder.JsonEncoder">
+            <timestampPattern>yyyy-MM-dd'T'HH:mm:ss.SSSXXX</timestampPattern>
+        </encoder>
+    </appender>
+
+    <!-- 访问日志专用 logger：不冒泡到 ROOT，避免与系统日志重复 -->
+    <logger name="myai.access" level="INFO" additivity="false">
+        <appender-ref ref="ACCESS_FILE"/>
+    </logger>
+
+    <!-- ===== 默认级别 ===== -->
+    <logger name="org.springframework" level="INFO"/>
+    <logger name="cn.edgarli" level="DEBUG"/>
+
+    <root level="INFO">
+        <appender-ref ref="STDOUT"/>
+        <appender-ref ref="APP_FILE"/>
+    </root>
+</configuration>
