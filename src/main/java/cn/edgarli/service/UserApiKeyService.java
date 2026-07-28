@@ -8,6 +8,7 @@ import cn.edgarli.entity.User;
 import cn.edgarli.entity.UserApiKey;
 import cn.edgarli.mapper.UserApiKeyMapper;
 import cn.edgarli.mapper.UserMapper;
+import cn.edgarli.observability.Auditable;
 import cn.edgarli.web.UserApiKeyRequest;
 import cn.edgarli.web.UserApiKeyResponse;
 import org.springframework.stereotype.Service;
@@ -46,6 +47,7 @@ public class UserApiKeyService {
     }
 
     @Transactional
+    @Auditable(action = "USER_API_KEY_CREATE", targetType = "UserApiKey")
     public UserApiKeyResponse create(Long userId, UserApiKeyRequest request) {
         User user = requireUser(userId);
         UserApiKey key = mergeAndValidate(new UserApiKey(), request, true);
@@ -61,6 +63,7 @@ public class UserApiKeyService {
     }
 
     @Transactional
+    @Auditable(action = "USER_API_KEY_UPDATE", targetType = "UserApiKey")
     public UserApiKeyResponse update(Long userId, Long keyId, UserApiKeyRequest request) {
         User user = requireUser(userId);
         UserApiKey key = requireKey(userId, keyId);
@@ -77,6 +80,7 @@ public class UserApiKeyService {
     }
 
     @Transactional
+    @Auditable(action = "USER_API_KEY_DELETE", targetType = "UserApiKey")
     public void delete(Long userId, Long keyId) {
         User user = requireUser(userId);
         requireKey(userId, keyId);
@@ -89,6 +93,7 @@ public class UserApiKeyService {
     }
 
     @Transactional
+    @Auditable(action = "USER_API_KEY_SET_DEFAULT", targetType = "UserApiKey")
     public UserApiKeyResponse setDefault(Long userId, Long keyId) {
         User user = requireUser(userId);
         UserApiKey key = requireKey(userId, keyId);

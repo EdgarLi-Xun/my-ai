@@ -81,16 +81,15 @@ public class AuditAspect {
 
     private static Long extractTargetId(Object result, Object[] args, Method method) {
         if (result != void.class && result != null) {
-            try {
-                Method getId = result.getClass().getMethod("getId");
-                Object idValue = getId.invoke(result);
-                if (idValue instanceof Long id) {
-                    return id;
-                }
-            } catch (ReflectiveOperationException ignored) {
-                // 返回值没有 getId()（NoSuchMethodException 是子类），继续走 fallback
-            } catch (Exception ex) {
-                log.warn("Failed to invoke getId() on {}", result.getClass(), ex);
+            // 1) Lombok @Data 类：getId()
+            Long id = tryInvokeNoArg(result, "getId");
+            if (id != null) {
+                return id;
+            }
+            // 2) Java record：id()
+            id = tryInvokeNoArg(result, "id");
+            if (id != null) {
+                return id;
             }
         }
         // fallback：方法参数最后一个 Long
@@ -102,6 +101,22 @@ public class AuditAspect {
             }
         }
         return null;
+    }
+
+    private static Long tryInvokeNoArg(Object target, String methodName) {
+        try {
+            Method m = target.getClass().getMethod(methodName);
+            Object value = m.invoke(target);
+            if (value instanceof Long id) {
+                return id;
+            }
+            return null;
+        } catch (ReflectiveOperationException ignored) {
+            return null;
+        } catch (Exception ex) {
+            log.warn("Failed to invoke {}() on {}", methodName, target.getClass(), ex);
+            return null;
+        }
     }
 
     private static Long currentUserId() {

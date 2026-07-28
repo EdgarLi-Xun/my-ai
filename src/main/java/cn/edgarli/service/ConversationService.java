@@ -5,6 +5,7 @@ import cn.edgarli.entity.Conversation;
 import cn.edgarli.entity.User;
 import cn.edgarli.mapper.ConversationMapper;
 import cn.edgarli.mapper.UserMapper;
+import cn.edgarli.observability.Auditable;
 import cn.edgarli.web.dto.ConversationResponse;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
@@ -34,6 +35,7 @@ public class ConversationService {
      * 或用户主动改名）。
      */
     @Transactional
+    @Auditable(action = "CONVERSATION_CREATE", targetType = "Conversation")
     public ConversationResponse create(Long userId) {
         requireUser(userId);
         LocalDateTime now = LocalDateTime.now();
@@ -63,6 +65,7 @@ public class ConversationService {
      * 改标题。强制设 {@code title_manually_set = TRUE}，避免下次首条 USER 消息覆盖用户改过的标题。
      */
     @Transactional
+    @Auditable(action = "CONVERSATION_UPDATE_TITLE", targetType = "Conversation")
     public ConversationResponse updateTitle(Long userId, Long conversationId, String newTitle) {
         requireUser(userId);
         requireOwnedConversation(userId, conversationId);
@@ -82,6 +85,7 @@ public class ConversationService {
      * 软删：{@code deleted_at = NOW()}。如果对话已软删过则幂等返回当前状态。
      */
     @Transactional
+    @Auditable(action = "CONVERSATION_SOFT_DELETE", targetType = "Conversation")
     public ConversationResponse softDelete(Long userId, Long conversationId) {
         requireUser(userId);
         requireOwnedConversation(userId, conversationId);
@@ -94,6 +98,7 @@ public class ConversationService {
      * 恢复软删对话：{@code deleted_at = NULL}。
      */
     @Transactional
+    @Auditable(action = "CONVERSATION_RESTORE", targetType = "Conversation")
     public ConversationResponse restore(Long userId, Long conversationId) {
         requireUser(userId);
         requireOwnedConversation(userId, conversationId);
@@ -106,6 +111,7 @@ public class ConversationService {
      * 永久删除：直接 DELETE 行，H2 按 FK CASCADE 自动级联删 message。
      */
     @Transactional
+    @Auditable(action = "CONVERSATION_HARD_DELETE", targetType = "Conversation")
     public void hardDelete(Long userId, Long conversationId) {
         requireUser(userId);
         requireOwnedConversation(userId, conversationId);
