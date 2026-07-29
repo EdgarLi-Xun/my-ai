@@ -3,6 +3,7 @@
 ## 修改日志
 
 - `2026-07-23` — 从传统对话记录切换为 plan 持久化格式（见 [[plan-tracking]] 记忆）。
+- `2026-07-29` — 第 17 次对话：用 `/grill-with-docs` 落 ADR 0006「uni-app App 端架构 + 可配置后端地址」13 决策；新建 `docs/adr/0006-uni-app-app-architecture.{md,en.md}`。本轮**仅设计定稿**，待用户通知后启动 Phase 1 SDK 骨架。
 
 ---
 
@@ -523,3 +524,115 @@ SSE 错误路径异常级联到 GlobalExceptionHandler，导致一次 chat 失�
 ### 留给用户
 - 重启后端跑一次失败的 chat，确认日志只剩 ~2 行 + 前端 EventSource 看到 `event: error` 事件。
 - MiniMax provider 404 是真正的 chat 不通原因，留待后续单独决策（改 baseUrl / 换 provider / 修 protocol）。
+
+---
+
+## 第 17 次对话（2026-07-29）— 🚧 进行中（设计定稿，待用户通知后实施）
+
+### 目标
+把 MyAi 从"仅 Web 单页"扩展到"Web + 移动 App"双端形态。落地路径：
+1. 新建 2 个独立仓库（`myAi-sdk` 共享 SDK + `myAi-app` uni-app x App）
+2. 后端**零改动**（完全复用现有 Spring Boot，仅预留 `/api/app/**` 命名空间给 v2）
+3. App 端允许用户自填后端地址（自部署 / 多实例 / 测试场景）
+4. MVP 范围 = web 现有功能 1:1 镜像 + 可配置后端；推送 / 微信扫码 / 多模态 / 上架 全部推迟到 v2
+
+设计定稿落在 ADR 0006（`docs/adr/0006-uni-app-app-architecture.{md,en.md}`）。本轮**仅写设计文档 + 更新 PLAN**，不写任何 App / SDK 业务代码。
+
+### 关键决策（/grill-with-docs 13 题全落定）
+
+| # | 决策维度 | 选择 |
+| --- | --- | --- |
+| Q1 | 目标平台 | **A+鸿蒙** = Android + iOS + HarmonyOS NEXT + H5（兜底） |
+| Q2 | 框架形态 | **uni-app x**（Vue 3 + Vite + **uts**；鸿蒙 NEXT 强制要求） |
+| Q3 | 仓库策略 | **C 双仓库并行**（web 与 App 物理隔离）+ 共享 SDK 独立仓库 |
+| Q4 | 后端策略 | **A 完全复用** + 预留 `/api/app/**` 命名空间 |
+| Q5 | 代码共享 | **C 共享 SDK**（TS 实现，App 通过 uts interop 消费） |
+| Q6 | App 鉴权 | MVP = **email/密码 + JWT**；SDK 第一天建 `AuthProvider` 接口骨架 |
+| Q7 | API Key 安全 | **A 完全复用现有模式**（用户输入 → 后端 → 前端只持掩码） |
+| Q8 | SSE 流式 | **A 保留 SSE**；SDK 写 `StreamingResponse` 抽象，H5 `EventSource` / App `fetch + ReadableStream` |
+| Q9 | UI 组件库 | **A uni-ui**（DCloud 官方，跨端覆盖最全） |
+| Q10 | MVP 原生能力 | **A 1:1 镜像**，推送 / 微信扫码 / 多模态全部 v2 |
+| Q11 | 打包与发布 | **A+D 自定义基座 + 本地分发 + 本地离线打包**（不商店、不云打包） |
+| Q12 | 测试策略 | **B SDK 单测（vitest）+ App 手测** |
+| Q13 | App 后端地址 | **A 硬编码默认 + 可改**（用户自填 URL + 校验） |
+
+### 落地产物（本轮已完成）
+- `docs/adr/0006-uni-app-app-architecture.md`（中文，含 13 决策 + Considered Options + Consequences + 关联 ADR + 实施 checklist）
+- `docs/adr/0006-uni-app-app-architecture.en.md`（英文版，与中文一一对应）
+- 本 PLAN.md 第 17 次对话段（本段）
+
+### 子步骤
+
+| # | 阶段 | 状态 | 关键产物 |
+| --- | --- | --- | --- |
+| 0 | PLAN.md | ✅ | 本表 |
+| 1 | ADR 0006 中文版 | ✅ | `docs/adr/0006-uni-app-app-architecture.md` |
+| 2 | ADR 0006 英文版 | ✅ | `docs/adr/0006-uni-app-app-architecture.en.md` |
+| 3 | Phase 1：SDK 骨架（`myAi-sdk/` 新仓库） | ⏳ 待用户通知 | `package.json` / `tsconfig.json` / `vitest.config.ts` / `src/{api,streaming,auth,storage,errors,media,push,utils,types}/` + 单测 |
+| 4 | Phase 2：App 仓库（`myAi-app/` 新仓库） | ⏳ 待用户通知 | uni-app x 项目初始化 + uni-ui 引入 + 8 个 `pages/`（index / config-backend / login / conversations / conversation/:id / keys / settings）|
+| 5 | Phase 3：现有 web 端接入 SDK（可选，非阻塞） | ⏳ 待用户通知 | `myAi/frontend/src/App.vue` 改 `import { ... } from '@myai/sdk'`；移除 `lib/sse.js` / `lib/markdown.js` |
+| 6 | Phase 4：文档收尾 | ⏳ 待用户通知 | CLAUDE.md §2/§4/§6（App 端项目事实 + 架构约定 + SSRF 误读澄清）+ `api.md` §6 SDK 调用契约 + `REQUIREMENTS.md` 1.10 |
+| 7 | 验证 | ⏳ 待用户通知 | `pnpm --filter @myai/sdk test` 全绿；4 端（Android / iOS / HarmonyOS / H5）跑通核心流程；`mvn -DskipTests package` 通过 |
+
+### 实施期子问题（不在 13 题里，待用户决策）
+
+| # | 子问题 | 选项 |
+| --- | --- | --- |
+| 1 | iOS / HarmonyOS 开发者账号是否申请 | 申请（真机调试）/ 不申请（仅模拟器） |
+| 2 | SDK 仓库位置 + npm 分发方式 | `D:/MyWork/myAi-sdk/` 独立仓库 + 私有 npm registry / GitHub public / path-only |
+| 3 | App 仓库位置 | `D:/MyWork/myAi-app/` 同级 / GitHub 新建 |
+| 4 | App 包名 / Bundle ID | `cn.edgarli.myai`（沿用）/ `com.<your-domain>.myai` |
+| 5 | App 版本起点 | `0.1.0` / `1.0.0` |
+
+### 验证过的 API 事实（Q13 后端 URL 校验）
+- `GET /api/providers` 公开端点，无需 auth → 可作为 SDK `validateBackendUrl` 的 ping 目标
+- `uni.request({ streaming: true })` 在 H5 / iOS / Android 上较稳 → SDK `StreamingResponse` App 分支基于此
+- HarmonyOS 流式响应 PoC 未跑 → 实施期 Phase 2 验证；若不通过降级到 chunked + JSON Lines（仅改后端 streaming 实现）
+
+### 显式不做（MVP 永不做 / 推迟到 v2）
+- 推送通知（iOS APNs / Android FCM / HarmonyOS Push Kit）
+- 微信扫码登录（ADR 0002 推迟到 v2 触发实施）
+- 华为账号 / Apple ID 登录
+- 图片上传对话（场景 1+3 推迟到 v2，~2 周工作量）
+- 图片生成（独立产品能力，永久单独评估）
+- 上架应用商店
+- 设备指纹 / 风控
+- 多后端 URL profile（v2）
+
+### 留给用户
+1. 13 决策 + 5 实施期子问题是否完整覆盖意图
+2. **启动时机**：Phase 1 SDK 骨架何时开工（用户明确说"先写文档，后续执行等我通知"）
+3. **仓库命名**：`myAi-sdk` / `myAi-app` 是否确认（vs 其他命名）
+
+---
+
+## 第 18 次对话（2026-07-29）— ✅ 已完成（2026-07-29）
+
+### 目标
+用户做了 git 分支梳理（无代码改动），随后通过 `/grill-with-docs` 落 ADR 0006「uni-app App 端架构 + 可配置后端地址」13 决策；本轮仅写设计文档。
+
+### git 分支现状（用户问时）
+
+| 分支 | 状态 | 最新提交 |
+| --- | --- | --- |
+| `refactor/adr-0005-three-layer-architecture` ⭐ | 当前分支，与 origin 同步 | `85e9d52` (2026-07-29) ADR 0005 三层架构落地 |
+| `master` | 本地分支，落后当前分支 1 个 commit | `1cc26ad` (2026-07-28) ADR 0005 设计文档 |
+
+两个远程：`origin` + `github`（均有 `master`）；`origin/HEAD` → `origin/master`。
+
+未跟踪文件：`.idea/` / `.mvn/` / `.tmp-*/` / `META-INF/` / `frontend/META-INF/` — 工作区"clean except untracked"。
+
+### 子步骤
+
+| # | 步骤 | 状态 |
+| --- | --- | --- |
+| 1 | git 分支梳理（无仓库修改） | ✅ |
+| 2 | grilling 13 题，落 ADR 0006 设计 | ✅ |
+| 3 | 写 ADR 0006 中文版 | ✅ |
+| 4 | 写 ADR 0006 英文版 | ✅ |
+| 5 | 更新 PLAN.md（本段） | ✅ |
+
+### 显式不做
+- 不写 SDK / App 业务代码（待用户通知后启动 Phase 1）
+- 不改后端代码（MVP 阶段后端零改动）
+- 不动 web 端代码（Phase 3 是可选非阻塞）
