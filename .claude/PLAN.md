@@ -381,7 +381,33 @@ HTTP 烟测（与第 13 次原阶段 7 同约束）。
 
 ---
 
-## 第 15 次对话（2026-07-28）— 🚧 设计定稿（ADR 已写，待用户通知执行）
+## 第 15 次对话（2026-07-28）— ✅ 已完成（2026-07-29）
+
+### 代码评审收尾（2026-07-29）
+
+5 处评审发现：5 条均为预先存在问题，refactor 是平移搬运；本次一并修复 4 处 + 1 处留 TODO。
+
+| # | 项目 | 处理 |
+| - | --- | --- |
+| 1 | `LogCleanupTask.softDeleted` 恒为 0/1 | **留 TODO**：MyBatis-Flex 1.11.8 `UpdateChain.update()` 返回 boolean；`updateByQuery()` 不存在；改 mapper 层 API 才拿得到 int rowsAffected，复杂度超出本次范围。 |
+| 2 | `MessageService` 空壳转发层 | **删除** `MessageService` 接口 + `MessageServiceImpl` 实现；`MessageController` 直接注 `MessageQueryService` + `MessageCommandService`；顺手更新 `MessageSupport.java` / `AiCallLogMapper.java` javadoc 引用。 |
+| 3 | `LogsController` 不走 `Result<>` 与 §12 不符 | **改文档**：§12 增 (b) admin 端点不经 `Result<>` 外壳的说明。 |
+| 4 | `MyAiApplication` 横幅端口 8080 | **改 8031** + 提示 `/api/chat` 是 deprecated alias；同时清理横幅注释里"过期文案"的自承。 |
+| 5 | `edit()` 响应里 `isOrphaned=true` | **响应层 override**：DB 仍 `orphan=true`（下游 regen 用），response 给前端前 `fresh.setIsOrphaned(false)`；DB 语义不变，UX 修复。 |
+
+### 验证
+
+- `mvn -DskipTests package` BUILD SUCCESS（3.972 s）。
+- 编译期静态覆盖到全部修改文件；运行时烟测未跑（按 CLAUDE.md §7 约定，不声称"全部通过"）。
+
+### 显式不做
+
+- 不改 ORM API（MyBatis-Flex 1.11.8 能力范围内解决；后续若升级到 2.x 可重看 `rowsAffected`）。
+- 不动 refactor 范围之外（schema / API 路径 / 业务码）。
+
+---
+
+## 第 15 次对话（2026-07-28）— ✅ 已完成（2026-07-29）
 
 ### 目标
 把仓库从"几乎三层但有几处偏离"演进为**严格教科书式三层架构**，并落地"XML mapper + 全仓双语注释"两项补充要求。本轮**只写设计文档**，不写业务代码。
@@ -403,13 +429,14 @@ HTTP 烟测（与第 13 次原阶段 7 同约束）。
 | 3 | MessageService 拆 | **Query + Command + 组合接口**（Controller 注入 1 个组合接口） |
 | 4 | AI 子包归宿 | **`cn.edgarli.service.ai`**（AiService 接口 + 实现） |
 | 5 | 基础设施统一 | `cn.edgarli.infrastructure.{security,config,task,observability,audit}` |
-| 6 | Entity / DTO 分层 | **DO / BO / VO 三层** |
-| 7 | DO 命名 | **加 Do 后缀**（`UserDo` 等 6 个） |
+| 6 | Entity / DTO 分层 | **实体类 + Dto + Vo**（**修正：不用 DO/BO/VO**） |
+| 7 | 实体命名 | **不加 Do 后缀**（`User` 等保留原名） |
 | 8 | 引入 XML mapper | 是；范围 = Conversation + Message 业务查询全迁 XML |
-| 9 | 注释粒度 | 方法 Javadoc + @param + 局部变量 // |
+| 9 | 注释粒度 | 方法 Javadoc + @param + 局部变量 // + **字段级** |
 | 10 | 注释覆盖 | 全仓所有 Java 源文件 + 2 个 XML |
 | 11 | 注释语言 | **每行完全双语**（中文 + 英文同行） |
 | 12 | 转换层 | `cn.edgarli.web.converter`（手动 converter，不引 MapStruct） |
+| 12b | Dto/Vo 类后缀 | **`Dto` / `Vo`**（**修正：不用 Request/Response**） |
 
 ### 落地产物
 - `docs/adr/0005-three-layer-architecture.md`（中文）
@@ -422,11 +449,15 @@ HTTP 烟测（与第 13 次原阶段 7 同约束）。
 | --- | --- | --- |
 | 0 | ADR 0005 中英文版 | ✅ |
 | 1 | PLAN.md（本表） | ✅ |
-| 2 | 阶段 A：基础设施搬迁（security/config/task/observability/audit → `infrastructure`） | ⏳ 待用户通知 |
-| 3 | 阶段 B：Service 接口/Impl 分离 + AI 子包重构（拆 MessageService + 引入 AiService） | ⏳ |
-| 4 | 阶段 C：DO/BO/VO 分层（6 entity → Do 后缀；补 VO；补 converter；补 BO） | ⏳ |
-| 5 | 阶段 D：Conversation + Message XML mapper 迁移（2 个 XML） | ⏳ |
-| 6 | 阶段 E：全仓注释补齐（方法 Javadoc + @param + 局部 //，双语） | ⏳ |
+| 2 | 阶段 A：基础设施搬迁（security/config/task/observability/audit → `infrastructure`） | ✅ 已完成 |
+| 3 | 阶段 B：Service 接口/Impl 分离 + AI 子包重构（拆 MessageService + 引入 AiService） | ✅ 已完成 |
+| 4 | 阶段 C：实体类 / DTO / VO 三层（实体类不加 Do 后缀；后缀命名 `Dto` / `Vo`） | ✅ 已完成（实体原名 + `web/dto` Dto×7 + `web/vo` Vo×8 + `web/converter` 手动转换层；DTO 由原 `*Request` 改名、VO 由原 `*Response` 改名） |
+| 5 | 阶段 D：Conversation + Message XML mapper 迁移（2 个 XML） | ✅ 已完成 |
+| 6 | 阶段 E：全仓注释补齐 — **方法/参数/局部双语**（按子包分 8 批并行） | ✅ 已完成（2026-07-29） |
+| 6a | 阶段 E 子集 — **字段级双语**（entity 6 + DTO 7 + VO 8 = 21 文件） | ✅ 已完成（2026-07-29） |
+| 6b | 阶段 E 子集 — common/ 双语（3 文件） | ✅ 已完成（2026-07-29） |
+| 6c | 阶段 E 子集 — MyAiApplication 入口 + 6 批并行子代理 | ✅ 已完成（2026-07-29） |
+| 7 | 阶段 6：最终验证 + 文档收尾 | ✅ 已完成（2026-07-29） |
 
 ### 显式不做
 - 不引入 MapStruct（手动 converter 够用）
@@ -436,3 +467,59 @@ HTTP 烟测（与第 13 次原阶段 7 同约束）。
 
 ### 留给用户
 - 阶段 A-E 何时启动（用户明确说"先写到文档里面，后续执行等我通知"）
+
+### 最终收尾（2026-07-29）
+
+**阶段 A → E 全部完成**。交付范围：
+
+| 项 | 落地 |
+| --- | --- |
+| 阶段 A：基础设施搬迁 | `security/config/task/observability/audit` 全部进 `cn.edgarli.infrastructure.*`；`FlexConfig` 移到 `infrastructure.config` |
+| 阶段 B：Service 接口/Impl 分离 | `service/` 接口 + `service/impl/` 实现 + `service/ai/` 子包 + `AiService` 引入；`MessageService` 拆 Query + Command + 组合 |
+| 阶段 C：实体 + Dto + Vo 三层 | 6 实体原名（无 Do 后缀） + `web/dto` 7 个 `*Dto` + `web/vo` 8 个 `*Vo` + `web/converter` 3 个手动转换器 |
+| 阶段 D：XML mapper | `ConversationMapper.xml` + `MessageMapper.xml` 共 15 个 SQL 段；接口方法 `@Param` 标注 |
+| 阶段 E：双语注释 | 81 Java + 2 XML = 83 文件全覆盖；entity/DTO/VO 字段 + 方法 Javadoc + @param + impl 局部 `//` 双语 |
+| 文档收尾 | `.claude/CLAUDE.md` §2（项目事实）+ §4 增 ADR 0005 三层 / DTO-VO / Service 分离 / XML mapper / 双语注释 5 条；`docs/adr/0005-*.md` 中英双版 |
+| 编译验证 | `mvn -DskipTests package` BUILD SUCCESS（最终） |
+
+**最终统计**：81 个 Java 源文件、2 个 XML mapper 文件、5 对 ADR（共 10 份 .md）。
+
+**未做**：运行时烟测（`mvn spring-boot:run` + curl）；子代理编辑的注释未逐文件 spot check，仅依赖编译通过 + 子代理报告。下一轮启动时可走一遍 review。
+
+---
+
+## 第 16 次对话（2026-07-29）— ✅ 已完成（2026-07-29）
+
+### 目标
+SSE 错误路径异常级联到 GlobalExceptionHandler，导致一次 chat 失败产生 12 行噪声日志。修 P0（emitter 异常吞噬）+ P1（MessageAggregator 静音）。
+
+### 根因
+`MessageCommandServiceImpl.streamReply` / `regenerate` 的 Flux 订阅 error 回调里，**先** `sendEvent(emitter, "error", ...)` 推送事件，**再** `emitter.completeWithError(err)`。后者把异常抛给 Spring MVC 的异常解析链 → `GlobalExceptionHandler.handleException` 试图返回 `Result<>` JSON，但响应 `Content-Type` 已被 SseEmitter 设为 `text/event-stream` → `HttpMessageNotWritableException` → Tomcat Servlet.service ERROR → 再次进 GlobalExceptionHandler → 二次炸开 → DefaultHandlerExceptionResolver 放弃。整条链产生 3 + 1 + 1 + 1 + 2 + 1 + 2 + 1 = 12 行。
+
+### 关键决策
+- **P0 改 2 行**：把 `emitter.completeWithError(err)` 换成 `safeComplete(emitter)`（已存在的 helper，等价于 `emitter.complete()` 加 try/catch）。emitter 正常关闭 → Spring MVC 不触发异常处理 → 前端 SSE 解析器看到 `event: error` + 正常结束。
+- **P1 修原方案错误**：原本说 `MessageAggregator` 设 `WARN` 不对 —— logback 阈值语义是 level=WARN 时 ERROR 仍通过。要真正抑制必须 `OFF`。已在与用户沟通时说明并按 `OFF` 落地。
+- 不动 `sendErrorAndComplete`（pre-stream 错误路径，已用 `safeComplete`，正确）。
+- 不动 `GlobalExceptionHandler` 的 P2 兜底 —— P0 已经让 SSE 异常不出 emitter 回调，P2 不再必要，避免引入多余逻辑。
+
+### 子步骤
+
+| # | 步骤 | 状态 |
+| - | --- | --- |
+| 1 | `MessageCommandServiceImpl` 两处 `completeWithError(err)` → `safeComplete(emitter)` | ✅ |
+| 2 | `logback-spring.xml` 加 `MessageAggregator` logger level=`OFF` | ✅ |
+| 3 | `mvn -DskipTests package` 验证 | ✅（BUILD SUCCESS，3.657 s） |
+
+### 验证
+- `mvn -DskipTests package`：BUILD SUCCESS，JAR `target/myAi-1.0-SNAPSHOT.jar` 已落地。
+- 运行时烟测：**未跑**。预期修改后一次 chat 失败应剩 2 行日志：`MessageCommandServiceImpl` 的 `AI stream error for user={}, conversation={}` WARN + Tomcat `Servlet.service() for servlet [dispatcherServlet] threw exception` ERROR（后者来自 Spring MVC 仍会记一次完整异常轨迹，由 Spring 自身产生，与本改动无关）。P1 消除的 3 行 `MessageAggregator` ERROR 需要运行时确认。
+- 推测前端 SSE 解析行为：流结束改为正常（`complete()` 而非 `completeWithError(err)`），`event: error` 仍在前；`EventSource.onerror` 不应再触发，因为 SSE 协议层面是合法结束。
+
+### 显式不做
+- 不改 GlobalExceptionHandler 的 SSE 检测（P0 已足够）。
+- 不修 MiniMax provider 404（这是 chat 调不通的根因，与本次日志优化解耦）。
+- 不跑端到端 HTTP 烟测（运行时验证仍按 CLAUDE.md §7 约定不声称"全部通过"）。
+
+### 留给用户
+- 重启后端跑一次失败的 chat，确认日志只剩 ~2 行 + 前端 EventSource 看到 `event: error` 事件。
+- MiniMax provider 404 是真正的 chat 不通原因，留待后续单独决策（改 baseUrl / 换 provider / 修 protocol）。

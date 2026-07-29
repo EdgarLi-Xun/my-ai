@@ -25,17 +25,28 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 | 点 | README | 实际仓库 |
 | --- | --- | --- |
 | 数据访问框架 | "MyBatis 3.0.4" | MyBatis-Flex 1.11.8 |
-| 服务端口 | `localhost:8080` | `application.yml` 中是 8031（横幅文字已过期） |
-| MyBatis 兼容注解 | `MyBatisConfig` | 实际类名是 `cn.edgarli.config.FlexConfig` |
+| 服务端口 | `localhost:8080` | `application.yml` 中是 8031（横幅已对齐到 8031） |
+| MyBatis 兼容注解 | `MyBatisConfig` | 实际类名是 `cn.edgarli.infrastructure.config.FlexConfig` |
 | 协议支持 | OpenAI / Ollama | 实际含 Anthropic（`ProviderProtocol` 枚举 + `ChatClientFactory` 三分支） |
 | 认证 | 无认证 | Spring Security 6 + JWT（`/api/auth/{register,login,me}` + Bearer） |
 
-### 关键源码目录
+### 关键源码目录（ADR 0005 后的最终结构）
 
-- 后端包：`cn.edgarli.{ai, common, config, entity, mapper, security, service, web}`。
-- 资源：`src/main/resources/{application.yml, application-my.yml, schema.sql}`。
-- 前端源：`frontend/src/{App.vue, main.js, style.css}`；构建产物：`src/main/resources/static/{index.html, assets/}`。
-- `src/main/resources/cn/edgarli/mapper` 当前为空（`FlexConfig` 按通配扫描，删除该配置会导致启动失败）。
+- **后端包**（严格三层 + 基础设施）：
+  - `cn.edgarli.common` — `BizException` / `Result` / `GlobalExceptionHandler`
+  - `cn.edgarli.entity` — 6 个 entity 实体类（`User` / `UserApiKey` / `Conversation` / `Message` / `AiCallLog` / `AuditLog`），不加 `Do` 后缀
+  - `cn.edgarli.infrastructure.{security, config, observability, task, audit}` — 横切关注点；`security` 含 `SecurityConfig` / `JwtService` / `JwtAuthenticationFilter` / `AuthPrincipal` / `RestAuthenticationEntryPoint` / `RestAccessDeniedHandler`
+  - `cn.edgarli.mapper` — 6 个 MyBatis-Flex `BaseMapper` interface
+  - `cn.edgarli.service` — 8 个 service interface（`AuthService` / `UserService` / `UserApiKeyService` / `ConversationService` / `AiCallLogService` / `MessageService` 组合接口 = `MessageQueryService` + `MessageCommandService`）
+  - `cn.edgarli.service.impl` — 对应 8 个 `*Impl` 实现 + `MessageSupport`（Query/Command 共用 helper）
+  - `cn.edgarli.service.ai` — AI 业务接口与实现（`AiService` / `AiServiceImpl` / `ChatService` / `ChatClientFactory` / `ChatMessage`）；`service.ai.provider` 含 `ProviderCatalog` / `ProviderProtocol` / `ProviderSpec`
+  - `cn.edgarli.web` — 8 个 `@RestController`
+  - `cn.edgarli.web.dto` — 7 个 `*Dto`（请求体 record + 1 个 `@Data`）
+  - `cn.edgarli.web.vo` — 8 个 `*Vo`（响应 record）
+  - `cn.edgarli.web.converter` — 3 个手动 DO → VO 转换器（`UserConverter` / `AiCallLogConverter` / `AuditLogConverter`）
+- **资源**：`src/main/resources/{application.yml, application-my.yml, schema.sql}`。
+- **XML mapper**：`src/main/resources/cn/edgarli/mapper/{ConversationMapper.xml, MessageMapper.xml}`——Conversation + Message 业务查询全迁 XML（ADR 0005 §8）。
+- **前端源**：`frontend/src/{App.vue, main.js, style.css}`；构建产物：`src/main/resources/static/{index.html, assets/}`。
 
 ## 3. 标准命令
 
@@ -85,7 +96,7 @@ Maven 不会自动触发 `npm run build`；改前端源码后必须手动构建�
 9. **Key 明文落地但不外发**：`UserApiKey.apiKey` 用 `@ToString.Exclude` 屏蔽日志；响应体走 `mask()` 只回 `****abcd` 和 `hasApiKey`；编辑时空字符串明确表示保留原值。
 10. **FlexConfig 不能删**：显式声明 `HikariDataSource` 并交给 MyBatis-Flex 的 `FlexSqlSessionFactoryBean`，兼容 Spring Boot 4 自动数据源装配；同时保证 `MapUnderscoreToCamelCase=true`（Flex 1.x 强制）。删除或注释该类会导致启动失败 / 下划线字段无法映射。
 11. **对话 AI 上下文**：调 AI 前只取同对话内 `is_orphaned = FALSE` 的全部消息按 `created_at` 升序拼接；不同对话互不干扰。`is_orphaned = TRUE` 是软标记，不物理删除旧消息，保留回溯可能（ADR 0003 §4）。
-12. **SSE 端点不走 `Result<>` 外壳**：`POST /api/conversations/{id}/messages` 与 `POST /api/messages/{id}/regenerate` 返回 `SseEmitter` + `Content-Type: text/event-stream`，事件协议 `event: token` / `event: done` / `event: error`，前端 SSE 解析绕 `api()` 包装（`frontend/src/lib/sse.js`）。其余 controller 仍走 `Result<>`。
+12. **不走 `Result<>` 外壳的两类端点**：(a) SSE 端点（`POST /api/conversations/{id}/messages` + `POST /api/messages/{id}/regenerate`）返回 `SseEmitter` + `Content-Type: text/event-stream`，事件协议 `event: token` / `event: done` / `event: error`，前端 SSE 解析绕 `api()` 包装（`frontend/src/lib/sse.js`）；(b) admin 端点 `/api/logs/**`（`LogsController`）直接返回 List/Vo 列表/单对象，供 admin 工具脚本与未来 admin UI 使用，错误仍走 `BizException` → `GlobalExceptionHandler`。其余 controller 一律 `Result<>`。
 13. **`updated_at` 显式维护**：H2 不依赖 `ON UPDATE CURRENT_TIMESTAMP`，`MessageService` 在 USER / ASSISTANT 消息插入、edit / regenerate 标 orphan 后显式调 `ConversationMapper.touchUpdatedAt(id)`。漏掉会让侧栏顺序错乱。
 14. **业务码语义不重叠**：4030 = 跨用户拒绝（保留 `FORBIDDEN`）；4035 = 默认 Key 不可用（NULL / disabled / 配置无效）；4031-4034 = 对话 / 消息相关错误。详见 `BizException.java`。
 15. **`POST /api/chat` 已 deprecated**：保留作为兼容 alias，响应头带 `Deprecation: true` + `Warning: 299`；新代码必须用 `POST /api/conversations/{id}/messages`。下架时间未定。
@@ -96,6 +107,11 @@ Maven 不会自动触发 `npm run build`；改前端源码后必须手动构建�
     - 系统日志：logback-spring.xml 全 JSON（Logback 1.5+ 内置 `JsonEncoder`），stdout + `./logs/app.jsonl`。
     - **保留期**：`my-ai.logs.retention-days` 默认 30（env var `MYAI_LOGS_RETENTION_DAYS`）；`LogCleanupTask @Scheduled(cron="0 4 * * * *", zone="Asia/Shanghai")` 每天清理 — ai_call_log 直接物理删 created_at < now-retentionDays，audit_log 先软删 deleted_at = now（created_at < cutoff 且 deleted_at IS NULL），再物理删 deleted_at < now-retentionDays。
 17. **RBAC**：`User.role` = USER / ADMIN；`SecurityConfig` `/api/logs/**` hasRole("ADMIN")；admin 名单由 `AdminProperties.isAdmin(email)` 判定，绑定 env var `MYAI_ADMIN_EMAILS`（逗号分隔）。无 fallback — env var 没配则无管理员，日志 API 任何人都调不通。`JwtService` token claim 同时含 `uid` 与 `role`。
+18. **严格三层 + 横切（ADR 0005）**：依赖方向 **web → service → mapper**，反向禁止。横切关注点统一进 `cn.edgarli.infrastructure.*`（security / config / observability / task / audit），禁止反向依赖业务包。`web` 不直接调 mapper；`mapper` 不直接调 service。AI 调用入口统一走 `cn.edgarli.service.ai.AiService`（service 注入 controller）。
+19. **DTO/VO 双层（ADR 0005 §6）**：请求体走 `cn.edgarli.web.dto.*Dto`（7 个），响应体走 `cn.edgarli.web.vo.*Vo`（8 个）；持久化对象走 `cn.edgarli.entity.*`（不加 `Do` 后缀）。controller 不直接返回 entity，必须经 `cn.edgarli.web.converter.*Converter` 转 VO。`@RequestBody` / `@PathVariable` 也不直接绑 entity 类型。
+20. **Service 接口/Impl 分离（ADR 0005 §2）**：`cn.edgarli.service.*Service` 是接口，`cn.edgarli.service.impl.*ServiceImpl` 是实现（impl 在 `impl/` 子包）。`MessageService` 是组合接口（继承 `MessageQueryService` + `MessageCommandService`），controller 注入 1 个接口同时拿到查询与命令能力。`MessageSupport` 是 Query/Command impl 共用的 helper（私有方法抽出）。
+21. **XML mapper（ADR 0005 §8）**：仅 Conversation + Message 走 XML，业务查询全部从 BaseMapper 注解迁出。XML 接口方法必须 `@Param` 标注（避免依赖 `-parameters` 编译器 flag）。`User` / `UserApiKey` / `AiCallLog` / `AuditLog` 仍走 MyBatis-Flex `@Select` 注解或 QueryWrapper（动态查询用注解够简洁）。`MapperScan` 通过 `@MapperScan(basePackages = "cn.edgarli.mapper", annotationClass = Mapper.class)` 仅扫描带 `@Mapper` 注解的接口。
+22. **双语注释（ADR 0005 §9）**：所有 Java 源文件 + 2 个 XML mapper 的方法 Javadoc、`@param` / `@return` / `@throws`、impl 内的非平凡局部变量 `//`，都按"中文 + 英文同行"格式（例：`@param userId 用户 ID / user identifier`）。entity / DTO / VO 字段同样双语。新增文件必须遵循；存量文件已全部补齐（81 个 Java + 2 个 XML）。
 
 ### 数据模型（与 schema.sql 对齐）
 

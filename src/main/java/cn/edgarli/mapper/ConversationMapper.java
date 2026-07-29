@@ -2,101 +2,97 @@ package cn.edgarli.mapper;
 
 import cn.edgarli.entity.Conversation;
 import com.mybatisflex.core.BaseMapper;
-import com.mybatisflex.core.query.QueryWrapper;
-import com.mybatisflex.core.update.UpdateChain;
 import org.apache.ibatis.annotations.Mapper;
+import org.apache.ibatis.annotations.Param;
 
 import java.time.LocalDateTime;
 import java.util.List;
 
 /**
- * 对话数据访问接口（ADR 0003）。
+ * Conversation data access interface (MyBatis-Flex mapper, ADR 0003 + ADR 0005 §8).
+ * 对话数据访问接口（ADR 0003 + ADR 0005 §8）。
+ * <p>
+ * 业务查询的实现落在 {@code cn/edgarli/mapper/ConversationMapper.xml}，
+ * 简单 CRUD 仍走 {@link BaseMapper} 默认方法。
+ * <p>
+ * XML 引用到的参数统一加 {@link Param} 注解，避免依赖编译期 {@code -parameters}。
+ *
+ * @author MyAi
  */
 @Mapper
 public interface ConversationMapper extends BaseMapper<Conversation> {
 
     /**
-     * 按 id + owner 查对话（含已删），用于 owner 校验。
+     * 按主键 + 用户 id 查找对话（防止跨用户读）。
+     * Find a conversation by id and owning user id (prevents cross-user reads).
+     *
+     * @param id     对话主键 / conversation primary key
+     * @param userId 所属用户 id / owning user id
+     * @return 对话实体或 null / conversation entity or null
      */
-    default Conversation findByIdAndUserId(Long id, Long userId) {
-        return selectOneByQuery(
-                QueryWrapper.create()
-                        .where(Conversation::getId).eq(id)
-                        .and(Conversation::getUserId).eq(userId));
-    }
+    Conversation findByIdAndUserId(@Param("id") Long id, @Param("userId") Long userId);
 
     /**
-     * 当前用户的活跃对话（{@code deleted_at IS NULL}），按 {@code updated_at DESC}。
+     * 列出某用户未删除的对话（侧栏主视图）。
+     * List non-deleted conversations of a user (sidebar main view).
+     *
+     * @param userId 用户主键 / user primary key
+     * @return 未软删的对话列表 / list of non-deleted conversations
      */
-    default List<Conversation> findActiveByUserId(Long userId) {
-        return selectListByQuery(
-                QueryWrapper.create()
-                        .where(Conversation::getUserId).eq(userId)
-                        .and(Conversation::getDeletedAt).isNull()
-                        .orderBy(Conversation::getUpdatedAt, false));
-    }
+    List<Conversation> findActiveByUserId(@Param("userId") Long userId);
 
     /**
-     * 当前用户软删中的对话（{@code deleted_at IS NOT NULL}），按 {@code deleted_at DESC}。
+     * 列出某用户已软删的对话（回收站视图）。
+     * List soft-deleted conversations of a user (trash view).
+     *
+     * @param userId 用户主键 / user primary key
+     * @return 已软删的对话列表 / list of soft-deleted conversations
      */
-    default List<Conversation> findDeletedByUserId(Long userId) {
-        return selectListByQuery(
-                QueryWrapper.create()
-                        .where(Conversation::getUserId).eq(userId)
-                        .and(Conversation::getDeletedAt).isNotNull()
-                        .orderBy(Conversation::getDeletedAt, false));
-    }
+    List<Conversation> findDeletedByUserId(@Param("userId") Long userId);
 
     /**
-     * 改标题，同时必须翻转 {@code title_manually_set}，避免下次首条 USER 消息覆盖用户改过的标题。
+     * 修改对话标题。
+     * Update the conversation title.
+     *
+     * @param id       对话主键 / conversation primary key
+     * @param newTitle 新标题 / new title
+     * @return 受影响行数 / affected rows
      */
-    default int updateTitle(Long id, String newTitle) {
-        return UpdateChain.of(this)
-                .set(Conversation::getTitle, newTitle)
-                .set(Conversation::getTitleManuallySet, true)
-                .where(Conversation::getId).eq(id)
-                .update() ? 1 : 0;
-    }
+    int updateTitle(@Param("id") Long id, @Param("newTitle") String newTitle);
 
     /**
-     * 软删：{@code deleted_at = NOW()}。
+     * 软删对话（写入 deleted_at）。
+     * Soft delete a conversation (sets deleted_at).
+     *
+     * @param id 对话主键 / conversation primary key
+     * @return 受影响行数 / affected rows
      */
-    default int softDelete(Long id) {
-        return UpdateChain.of(this)
-                .set(Conversation::getDeletedAt, LocalDateTime.now())
-                .where(Conversation::getId).eq(id)
-                .update() ? 1 : 0;
-    }
+    int softDelete(@Param("id") Long id);
 
     /**
-     * 恢复：{@code deleted_at = NULL}。
+     * 恢复已软删对话（清空 deleted_at）。
+     * Restore a soft-deleted conversation (clears deleted_at).
+     *
+     * @param id 对话主键 / conversation primary key
+     * @return 受影响行数 / affected rows
      */
-    default int restore(Long id) {
-        return UpdateChain.of(this)
-                .set(Conversation::getDeletedAt, (LocalDateTime) null)
-                .where(Conversation::getId).eq(id)
-                .update() ? 1 : 0;
-    }
+    int restore(@Param("id") Long id);
 
     /**
-     * 显式维护 {@code updated_at}：H2 不依赖 {@code ON UPDATE CURRENT_TIMESTAMP}，
-     * 由 service 层在消息插入/编辑/重新生成后调一次。
+     * 显式维护 {@code updated_at}（H2 不依赖 ON UPDATE）。
+     * Explicitly bump {@code updated_at} (H2 does not rely on ON UPDATE).
+     *
+     * @param id 对话主键 / conversation primary key
+     * @return 受影响行数 / affected rows
      */
-    default int touchUpdatedAt(Long id) {
-        return UpdateChain.of(this)
-                .set(Conversation::getUpdatedAt, LocalDateTime.now())
-                .where(Conversation::getId).eq(id)
-                .update() ? 1 : 0;
-    }
+    int touchUpdatedAt(@Param("id") Long id);
 
     /**
-     * {@code ConversationCleanupTask} 用：删掉 {@code deleted_at < cutoff} 的所有行
-     * （H2 自动按 FK CASCADE 删 message）。
+     * 物理删除早于截止时间的对话（保留期清理）。
+     * Hard delete conversations older than the cutoff (retention cleanup).
+     *
+     * @param cutoff 截止时间（含）/ cutoff time (inclusive)
+     * @return 受影响行数 / affected rows
      */
-    default int hardDeleteOlderThan(LocalDateTime cutoff) {
-        return deleteByQuery(
-                QueryWrapper.create()
-                        .where(Conversation::getDeletedAt).isNotNull()
-                        .and(Conversation::getDeletedAt).lt(cutoff));
-    }
+    int hardDeleteOlderThan(@Param("cutoff") LocalDateTime cutoff);
 }

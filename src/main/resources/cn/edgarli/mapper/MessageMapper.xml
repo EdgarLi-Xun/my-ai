@@ -1,0 +1,74 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+  ADR 0005 §8 / 阶段 D：MessageMapper 业务查询 XML 实现。
+  命名空间绑定到 cn.edgarli.mapper.MessageMapper；
+  id 与 Java 接口方法名一一对应。
+-->
+<!DOCTYPE mapper PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN"
+        "http://mybatis.org/dtd/mybatis-3-mapper.dtd">
+<mapper namespace="cn.edgarli.mapper.MessageMapper">
+
+    <!-- 列对话消息（按 created_at 升序）；includeOrphaned=false 过滤 is_orphaned=FALSE / list messages asc by created_at -->
+    <select id="findByConversationId" resultType="cn.edgarli.entity.Message">
+        SELECT id, conversation_id, role, content, is_orphaned, created_at
+        FROM message
+        WHERE conversation_id = #{conversationId}
+        <if test="!includeOrphaned">
+            AND is_orphaned = FALSE
+        </if>
+        ORDER BY created_at ASC
+    </select>
+
+    <!-- 增量拉：id > sinceId 且 is_orphaned=FALSE（BroadcastChannel 收到 message:created 后用） / incremental since id -->
+    <select id="findByConversationIdSinceId" resultType="cn.edgarli.entity.Message">
+        SELECT id, conversation_id, role, content, is_orphaned, created_at
+        FROM message
+        WHERE conversation_id = #{conversationId}
+          AND id > #{sinceId}
+          AND is_orphaned = FALSE
+        ORDER BY id ASC
+    </select>
+
+    <!-- AI 上下文：对话全部 is_orphaned=FALSE 消息，按 created_at 升序 / AI context non-orphaned messages -->
+    <select id="findNonOrphanedContext" resultType="cn.edgarli.entity.Message">
+        SELECT id, conversation_id, role, content, is_orphaned, created_at
+        FROM message
+        WHERE conversation_id = #{conversationId} AND is_orphaned = FALSE
+        ORDER BY created_at ASC
+    </select>
+
+    <!-- AI 上下文（重新生成）：id < beforeMessageId 的未作废消息 / non-orphaned context before a given message id -->
+    <select id="findNonOrphanedContextBefore" resultType="cn.edgarli.entity.Message">
+        SELECT id, conversation_id, role, content, is_orphaned, created_at
+        FROM message
+        WHERE conversation_id = #{conversationId}
+          AND is_orphaned = FALSE
+          AND id &lt; #{beforeMessageId}
+        ORDER BY created_at ASC
+    </select>
+
+    <!-- 编辑 USER 消息时调用：把 created_at >= pivot 的所有同对话消息标 orphan / mark messages after pivot as orphan -->
+    <update id="markOrphansAfter">
+        UPDATE message
+        SET is_orphaned = TRUE
+        WHERE conversation_id = #{conversationId}
+          AND created_at >= #{pivot}
+    </update>
+
+    <!-- 重新生成 ASSISTANT 时调用：把目标 message 自身标 orphan / mark a single message as orphan -->
+    <update id="markOrphan">
+        UPDATE message
+        SET is_orphaned = TRUE
+        WHERE id = #{messageId}
+    </update>
+
+    <!-- 判断某对话是否已存在非作废 USER 消息（首条 USER 触发自动标题判定） / has any non-orphaned USER message -->
+    <select id="existsNonOrphanedUserMessage" resultType="boolean">
+        SELECT (COUNT(*) > 0)
+        FROM message
+        WHERE conversation_id = #{conversationId}
+          AND role = 'USER'
+          AND is_orphaned = FALSE
+    </select>
+
+</mapper>
