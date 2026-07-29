@@ -1,132 +1,54 @@
 package cn.edgarli.service;
 
-import cn.edgarli.common.BizException;
-import cn.edgarli.config.AdminProperties;
 import cn.edgarli.entity.User;
-import cn.edgarli.mapper.UserMapper;
-import cn.edgarli.security.AuthPrincipal;
-import cn.edgarli.security.JwtService;
-import cn.edgarli.web.AuthResponse;
-import org.springframework.security.core.context.SecurityContextHolder;
-import org.springframework.security.crypto.password.PasswordEncoder;
-import org.springframework.stereotype.Service;
-import org.springframework.transaction.annotation.Transactional;
-
-import java.time.LocalDateTime;
+import cn.edgarli.web.vo.AuthVo;
 
 /**
- * 用户认证：注册、登录。
+ * Authentication service: register, login, current user.
+ * 用户认证服务（注册、登录、当前用户）。
  * <p>
- * RBAC 角色（ADR 0004）：register / login 时按 {@link AdminProperties#isAdmin(String)}
+ * RBAC roles (ADR 0004): on register / login, the {@code User.role} is determined by
+ * {@link cn.edgarli.infrastructure.config.AdminProperties#isAdmin(String)}.
+ * RBAC 角色（ADR 0004）：register / login 时按 {@link cn.edgarli.infrastructure.config.AdminProperties#isAdmin(String)}
  * 决定 {@code User.role}。命中 admin email 列表 → {@link User#ROLE_ADMIN}，
  * 否则 {@link User#ROLE_USER}。
+ * Match against admin email list → {@link User#ROLE_ADMIN}, otherwise {@link User#ROLE_USER}.
+ *
+ * @author MyAi
  */
-@Service
-public class AuthService {
+public interface AuthService {
 
-    private final UserMapper userMapper;
-    private final JwtService jwtService;
-    private final PasswordEncoder passwordEncoder;
-    private final AdminProperties adminProperties;
+    /**
+     * Register a new user.
+     * 注册新用户。
+     *
+     * @param name user name (required, non-empty after trim) / 用户名（必填，trim 后非空）
+     * @param email email (required, non-empty after trim; unique) / 邮箱（必填，trim 后非空；唯一）
+     * @param password password (required, at least 6 chars) / 密码（必填，至少 6 位）
+     * @return register response (with token) / 注册响应（含 token）
+     * @throws cn.edgarli.common.BizException 4000 field missing or invalid; 4090 email already registered
+     *         4000 字段缺失或非法；4090 邮箱已注册
+     */
+    AuthVo register(String name, String email, String password);
 
-    public AuthService(UserMapper userMapper,
-                       JwtService jwtService,
-                       PasswordEncoder passwordEncoder,
-                       AdminProperties adminProperties) {
-        this.userMapper = userMapper;
-        this.jwtService = jwtService;
-        this.passwordEncoder = passwordEncoder;
-        this.adminProperties = adminProperties;
-    }
+    /**
+     * Email + password login.
+     * 邮箱密码登录。
+     *
+     * @param email email / 邮箱
+     * @param password password / 密码
+     * @return login response (with token) / 登录响应（含 token）
+     * @throws cn.edgarli.common.BizException 4010 wrong email or password / 4010 邮箱或密码错误
+     */
+    AuthVo login(String email, String password);
 
-    @Transactional
-    public AuthResponse register(String name, String email, String password) {
-        String trimmedName = trim(name);
-        String trimmedEmail = trim(email);
-        String trimmedPassword = trim(password);
-
-        if (trimmedName == null) {
-            throw BizException.badRequest("用户名不能为空");
-        }
-        if (trimmedEmail == null) {
-            throw BizException.badRequest("邮箱不能为空");
-        }
-        if (trimmedPassword == null || trimmedPassword.length() < 6) {
-            throw BizException.badRequest("密码至少 6 位");
-        }
-
-        // email 唯一性
-        User existing = findByEmail(trimmedEmail);
-        if (existing != null) {
-            throw BizException.conflict("该邮箱已被注册");
-        }
-
-        User user = new User();
-        user.setName(trimmedName);
-        user.setEmail(trimmedEmail);
-        user.setPasswordHash(passwordEncoder.encode(trimmedPassword));
-        user.setRole(adminProperties.isAdmin(trimmedEmail) ? User.ROLE_ADMIN : User.ROLE_USER);
-        user.setCreateTime(LocalDateTime.now());
-        userMapper.insert(user);
-
-        String token = jwtService.generate(user.getId(), user.getRole());
-        return new AuthResponse(user.getId(), user.getName(), user.getEmail(), token);
-    }
-
-    public AuthResponse login(String email, String password) {
-        String trimmedEmail = trim(email);
-        String trimmedPassword = trim(password);
-
-        if (trimmedEmail == null) {
-            throw BizException.badRequest("邮箱不能为空");
-        }
-        if (trimmedPassword == null) {
-            throw BizException.badRequest("密码不能为空");
-        }
-
-        User user = requireByEmail(trimmedEmail);
-        String storedHash = userMapper.findPasswordHashById(user.getId());
-        if (storedHash == null || !passwordEncoder.matches(trimmedPassword, storedHash)) {
-            throw BizException.unauthorized("邮箱或密码错误");
-        }
-
-        // 角色以 DB 值为准；DB 缺失或异常时回退 admin 列表判定（覆盖历史 user role=NULL）
-        String role = user.getRole();
-        if (role == null || role.isBlank()) {
-            role = adminProperties.isAdmin(trimmedEmail) ? User.ROLE_ADMIN : User.ROLE_USER;
-        }
-        String token = jwtService.generate(user.getId(), role);
-        return new AuthResponse(user.getId(), user.getName(), user.getEmail(), token);
-    }
-
-    public User getCurrentUser() {
-        AuthPrincipal principal = (AuthPrincipal) SecurityContextHolder.getContext().getAuthentication();
-        if (principal == null || principal.getUserId() == null) {
-            throw BizException.unauthorized("未登录");
-        }
-        User user = userMapper.findById(principal.getUserId());
-        if (user == null) {
-            throw BizException.notFound("用户不存在");
-        }
-        return user;
-    }
-
-    private User requireByEmail(String email) {
-        User user = findByEmail(email);
-        if (user == null) {
-            throw BizException.unauthorized("邮箱或密码错误");
-        }
-        return user;
-    }
-
-    private User findByEmail(String email) {
-        return userMapper.findByEmail(email);
-    }
-
-    private static String trim(String value) {
-        if (value == null || value.isBlank()) {
-            return null;
-        }
-        return value.trim();
-    }
+    /**
+     * Get current logged-in user.
+     * 取当前登录用户。
+     *
+     * @return current user / 当前用户
+     * @throws cn.edgarli.common.BizException 4010 not logged in; 4040 user not found
+     *         4010 未登录；4040 用户不存在
+     */
+    User getCurrentUser();
 }

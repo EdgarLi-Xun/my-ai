@@ -1,74 +1,59 @@
 package cn.edgarli.service;
 
-import cn.edgarli.entity.AiCallLog;
-import cn.edgarli.mapper.AiCallLogMapper;
-import org.slf4j.MDC;
-import org.springframework.stereotype.Service;
-import org.springframework.transaction.annotation.Transactional;
-
-import java.time.LocalDateTime;
-
 /**
+ * AI call log writer (ADR 0004 §3).
  * AI 调用日志写入（ADR 0004 §3）。
  * <p>
- * 调用方约定：{@link #recordSuccess} / {@link #recordFailure} 由
- * {@link cn.edgarli.service.MessageService} 在 AI 流式 onComplete / onError
- * 时调用；trace_id 从 MDC 取（{@link TraceIdFilter} 已注入）。
+ * Called by message send/recv services on AI stream onComplete / onError;
+ * trace_id is read from MDC (already injected by {@link cn.edgarli.infrastructure.observability.TraceIdFilter}).
+ * 由消息收发服务在 AI 流式 onComplete / onError 时调用；
+ * trace_id 从 MDC 取（{@link cn.edgarli.infrastructure.observability.TraceIdFilter} 已注入）。
+ *
+ * @author MyAi
  */
-@Service
-public class AiCallLogService {
+public interface AiCallLogService {
 
-    private final AiCallLogMapper mapper;
+    /**
+     * Record a successful AI call.
+     * 记录成功的 AI 调用。
+     *
+     * @param userId user id / 用户 ID
+     * @param conversationId conversation id (optional) / 对话 ID（可空）
+     * @param messageId message id (optional) / 消息 ID（可空）
+     * @param provider provider name / provider 名
+     * @param modelName model name / 模型名
+     * @param latencyMs call latency in milliseconds / 调用耗时（毫秒）
+     * @param inputTokens input tokens (optional; some providers don't return usage) / 输入 tokens（可空，部分 provider 不返回）
+     * @param outputTokens output tokens (optional; some providers don't return usage) / 输出 tokens（可空，部分 provider 不返回）
+     * @return id of the new log row / 新建日志的 ID
+     */
+    Long recordSuccess(Long userId,
+                       Long conversationId,
+                       Long messageId,
+                       String provider,
+                       String modelName,
+                       long latencyMs,
+                       Integer inputTokens,
+                       Integer outputTokens);
 
-    public AiCallLogService(AiCallLogMapper mapper) {
-        this.mapper = mapper;
-    }
-
-    @Transactional
-    public Long recordSuccess(Long userId,
-                              Long conversationId,
-                              Long messageId,
-                              String provider,
-                              String modelName,
-                              long latencyMs,
-                              Integer inputTokens,
-                              Integer outputTokens) {
-        AiCallLog row = new AiCallLog();
-        row.setUserId(userId);
-        row.setConversationId(conversationId);
-        row.setMessageId(messageId);
-        row.setProvider(provider);
-        row.setModelName(modelName);
-        row.setStatus(AiCallLog.STATUS_SUCCESS);
-        row.setLatencyMs(latencyMs);
-        row.setInputTokens(inputTokens);
-        row.setOutputTokens(outputTokens);
-        row.setTraceId(MDC.get("trace_id"));
-        row.setCreatedAt(LocalDateTime.now());
-        mapper.insert(row);
-        return row.getId();
-    }
-
-    @Transactional
-    public Long recordFailure(Long userId,
-                              Long conversationId,
-                              Long messageId,
-                              String provider,
-                              String modelName,
-                              long latencyMs,
-                              String errorMessage) {
-        AiCallLog row = new AiCallLog();
-        row.setUserId(userId);
-        row.setConversationId(conversationId);
-        row.setMessageId(messageId);
-        row.setProvider(provider);
-        row.setModelName(modelName);
-        row.setStatus(AiCallLog.STATUS_FAILURE);
-        row.setLatencyMs(latencyMs);
-        row.setErrorMessage(errorMessage);
-        row.setTraceId(MDC.get("trace_id"));
-        row.setCreatedAt(LocalDateTime.now());
-        mapper.insert(row);
-        return row.getId();
-    }
+    /**
+     * Record a failed AI call.
+     * 记录失败的 AI 调用。
+     *
+     * @param userId user id / 用户 ID
+     * @param conversationId conversation id (optional) / 对话 ID（可空）
+     * @param messageId message id (optional) / 消息 ID（可空）
+     * @param provider provider name / provider 名
+     * @param modelName model name / 模型名
+     * @param latencyMs call latency in milliseconds / 调用耗时（毫秒）
+     * @param errorMessage error message / 错误信息
+     * @return id of the new log row / 新建日志的 ID
+     */
+    Long recordFailure(Long userId,
+                       Long conversationId,
+                       Long messageId,
+                       String provider,
+                       String modelName,
+                       long latencyMs,
+                       String errorMessage);
 }

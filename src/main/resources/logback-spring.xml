@@ -57,6 +57,13 @@
     <!-- ===== 默认级别 ===== -->
     <logger name="org.springframework" level="INFO"/>
     <logger name="cn.edgarli" level="DEBUG"/>
+    <!--
+      抑制 Spring AI 流聚合器的 ERROR 噪音 / suppress Spring AI MessageAggregator ERROR noise
+      流分片失败时 MessageAggregator 会逐片打一行 ERROR（与 chat 失败的分片数一致）
+      我们的 MessageCommandServiceImpl 已在流式订阅的 error 回调里 recordFailure + log.warn，
+      所以这里的 ERROR 是冗余信号。用 OFF 完全屏蔽。
+    -->
+    <logger name="org.springframework.ai.chat.model.MessageAggregator" level="OFF"/>
 
     <root level="INFO">
         <appender-ref ref="STDOUT"/>

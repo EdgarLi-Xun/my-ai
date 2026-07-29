@@ -2,100 +2,94 @@ package cn.edgarli.mapper;
 
 import cn.edgarli.entity.Message;
 import com.mybatisflex.core.BaseMapper;
-import com.mybatisflex.core.query.QueryWrapper;
-import com.mybatisflex.core.update.UpdateChain;
 import org.apache.ibatis.annotations.Mapper;
+import org.apache.ibatis.annotations.Param;
 
 import java.time.LocalDateTime;
 import java.util.List;
 
 /**
- * 消息数据访问接口（ADR 0003）。
+ * Message data access interface (MyBatis-Flex mapper, ADR 0003 + ADR 0005 §8).
+ * 消息数据访问接口（ADR 0003 + ADR 0005 §8）。
+ * <p>
+ * 业务查询的实现落在 {@code cn/edgarli/mapper/MessageMapper.xml}，
+ * 简单 CRUD 仍走 {@link BaseMapper} 默认方法。
+ * <p>
+ * XML 引用到的参数统一加 {@link Param} 注解，避免依赖编译期 {@code -parameters}。
+ *
+ * @author MyAi
  */
 @Mapper
 public interface MessageMapper extends BaseMapper<Message> {
 
     /**
-     * 列出某对话的消息（按 {@code created_at} 升序）。{@code includeOrphaned = false} 时
-     * 只回 {@code is_orphaned = FALSE} 的消息；true 时全回（含编辑/重新生成路径作废的）。
+     * 按对话 id 拉取全部消息，可选择是否包含已 orphan 的。
+     * Load all messages of a conversation, optionally including orphaned ones.
+     *
+     * @param conversationId  对话主键 / conversation primary key
+     * @param includeOrphaned 是否包含已 orphan 的消息 / whether to include orphaned messages
+     * @return 消息列表（按 created_at 升序）/ messages ordered by created_at ascending
      */
-    default List<Message> findByConversationId(Long conversationId, boolean includeOrphaned) {
-        QueryWrapper query = QueryWrapper.create()
-                .where(Message::getConversationId).eq(conversationId)
-                .orderBy(Message::getCreatedAt, true);
-        if (!includeOrphaned) {
-            query.and(Message::getIsOrphaned).eq(false);
-        }
-        return selectListByQuery(query);
-    }
+    List<Message> findByConversationId(@Param("conversationId") Long conversationId,
+                                       @Param("includeOrphaned") boolean includeOrphaned);
 
     /**
-     * 增量拉：{@code id > sinceId} 且 {@code is_orphaned = FALSE}（默认 UI 看不到 orphan）。
-     * 用于 BroadcastChannel 收到 {@code message:created} 后增量更新。
+     * 取某对话中 id 大于 sinceId 的消息（增量拉取用）。
+     * Load messages of a conversation with id greater than sinceId (incremental fetch).
+     *
+     * @param conversationId 对话主键 / conversation primary key
+     * @param sinceId        起始 id（不含）/ starting id (exclusive)
+     * @return 增量消息列表 / incremental messages
      */
-    default List<Message> findByConversationIdSinceId(Long conversationId, Long sinceId) {
-        return selectListByQuery(
-                QueryWrapper.create()
-                        .where(Message::getConversationId).eq(conversationId)
-                        .and(Message::getId).gt(sinceId)
-                        .and(Message::getIsOrphaned).eq(false)
-                        .orderBy(Message::getId, true));
-    }
+    List<Message> findByConversationIdSinceId(@Param("conversationId") Long conversationId,
+                                              @Param("sinceId") Long sinceId);
 
     /**
-     * AI 上下文：某对话全部 {@code is_orphaned = FALSE} 的消息，按 {@code created_at} 升序。
+     * 取某对话未 orphan 的全部消息（AI 上下文拼接用）。
+     * Load non-orphaned messages of a conversation (used to assemble AI context).
+     *
+     * @param conversationId 对话主键 / conversation primary key
+     * @return 未 orphan 的消息按 created_at 升序 / non-orphaned messages ordered by created_at ascending
      */
-    default List<Message> findNonOrphanedContext(Long conversationId) {
-        return selectListByQuery(
-                QueryWrapper.create()
-                        .where(Message::getConversationId).eq(conversationId)
-                        .and(Message::getIsOrphaned).eq(false)
-                        .orderBy(Message::getCreatedAt, true));
-    }
+    List<Message> findNonOrphanedContext(@Param("conversationId") Long conversationId);
 
     /**
-     * AI 上下文（重新生成场景）：{@code id &lt; beforeMessageId} 的未作废消息，按 {@code created_at} 升序。
-     * 重新生成某条 ASSISTANT 时只用它之前的 history。
+     * 取某对话中指定消息之前的未 orphan 上下文（regenerate 限窗用）。
+     * Load non-orphaned context before a given message in a conversation (used for regenerate windowing).
+     *
+     * @param conversationId  对话主键 / conversation primary key
+     * @param beforeMessageId 边界消息 id（不含）/ pivot message id (exclusive)
+     * @return 限窗后的上下文消息 / windowed context messages
      */
-    default List<Message> findNonOrphanedContextBefore(Long conversationId, Long beforeMessageId) {
-        return selectListByQuery(
-                QueryWrapper.create()
-                        .where(Message::getConversationId).eq(conversationId)
-                        .and(Message::getIsOrphaned).eq(false)
-                        .and(Message::getId).lt(beforeMessageId)
-                        .orderBy(Message::getCreatedAt, true));
-    }
+    List<Message> findNonOrphanedContextBefore(@Param("conversationId") Long conversationId,
+                                               @Param("beforeMessageId") Long beforeMessageId);
 
     /**
-     * 编辑 USER 消息时调用：把 {@code created_at &gt;= pivot} 的所有同对话消息标 orphan。
-     * 这样后续 AI 调用只看该消息之前的 history。
+     * 标记某对话中 created_at &gt; pivot 的所有消息为 orphan（regenerate 时回滚后续）。
+     * Mark all messages of a conversation with created_at strictly after pivot as orphaned (used by regenerate rollback).
+     *
+     * @param conversationId 对话主键 / conversation primary key
+     * @param pivot          枢轴时间 / pivot time
+     * @return 受影响行数 / affected rows
      */
-    default int markOrphansAfter(Long conversationId, LocalDateTime pivot) {
-        return UpdateChain.of(this)
-                .set(Message::getIsOrphaned, Boolean.TRUE)
-                .where(Message::getConversationId).eq(conversationId)
-                .and(Message::getCreatedAt).ge(pivot)
-                .update() ? 1 : 0;
-    }
+    int markOrphansAfter(@Param("conversationId") Long conversationId,
+                         @Param("pivot") LocalDateTime pivot);
 
     /**
-     * 重新生成 ASSISTANT 时调用：把目标 message 自身标 orphan（保留旧版本，新版本作为新 row 插入）。
+     * 单条消息标记为 orphan（edit / regenerate 替换单条时使用）。
+     * Mark a single message as orphaned (used when a single message is replaced by edit / regenerate).
+     *
+     * @param messageId 消息主键 / message primary key
+     * @return 受影响行数 / affected rows
      */
-    default int markOrphan(Long messageId) {
-        return UpdateChain.of(this)
-                .set(Message::getIsOrphaned, Boolean.TRUE)
-                .where(Message::getId).eq(messageId)
-                .update() ? 1 : 0;
-    }
+    int markOrphan(@Param("messageId") Long messageId);
 
     /**
-     * 判断某对话是否已存在非作废的 USER 消息（用于"首条 USER 消息触发自动标题"判定）。
+     * 判断某对话是否存在未 orphan 的用户消息（用于空对话守卫）。
+     * Check whether a conversation has any non-orphaned user message (used by empty-conversation guard).
+     *
+     * @param conversationId 对话主键 / conversation primary key
+     * @return true 表示存在 / true if exists
      */
-    default boolean existsNonOrphanedUserMessage(Long conversationId) {
-        return selectCountByQuery(
-                QueryWrapper.create()
-                        .where(Message::getConversationId).eq(conversationId)
-                        .and(Message::getRole).eq(Message.ROLE_USER)
-                        .and(Message::getIsOrphaned).eq(false)) > 0;
-    }
+    boolean existsNonOrphanedUserMessage(@Param("conversationId") Long conversationId);
 }

@@ -66,7 +66,7 @@ Authorization: Bearer <token>
 - `name` / `email` / `password` 均必填；`password` 至少 6 位 → 4000。
 - `email` 已存在 → 4090 该邮箱已被注册。
 - 密码以 BCrypt 散列存储，不会明文落库。
-- 成功返回 `AuthResponse`：`{ userId, name, email, token }`。
+- 成功返回 `AuthVo`：`{ userId, name, email, token }`。
 
 ### POST `/api/auth/login`
 
@@ -75,7 +75,7 @@ Authorization: Bearer <token>
 ```
 
 - 邮箱或密码错误 → 4010 邮箱或密码错误（不做区分）。
-- 成功返回 `AuthResponse`。
+- 成功返回 `AuthVo`。
 
 ### GET `/api/auth/me`
 
@@ -127,7 +127,7 @@ Authorization: Bearer <token>
 
 新增 Key 配置。
 
-请求体（`UserApiKeyRequest`）：
+请求体（`UserApiKeyDto`）：
 
 | 字段 | 必填 | 行为 |
 | --- | --- | --- |
@@ -189,7 +189,7 @@ Authorization: Bearer <token>
 
 ### POST `/api/chat`
 
-兼容旧调用。请求体（`ChatRequest`）：
+兼容旧调用。请求体（`ChatDto`）：
 
 ```json
 {
@@ -208,7 +208,7 @@ Authorization: Bearer <token>
 - 默认 Key 不可用 → **4035**（已从原 4090 迁移）。
 - 调用方跨用户 → 4030（沿用）。
 
-成功返回 `ChatResponse` + `Deprecation: true` 响应头：
+成功返回 `ChatVo` + `Deprecation: true` 响应头：
 
 ```json
 { "code": 0, "message": "success", "data": { "reply": "..." } }

@@ -1,0 +1,68 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+  ADR 0005 §8 / 阶段 D：ConversationMapper 业务查询 XML 实现。
+  命名空间绑定到 cn.edgarli.mapper.ConversationMapper；
+  id 与 Java 接口方法名一一对应。简单 CRUD 仍走 BaseMapper 默认方法。
+-->
+<!DOCTYPE mapper PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN"
+        "http://mybatis.org/dtd/mybatis-3-mapper.dtd">
+<mapper namespace="cn.edgarli.mapper.ConversationMapper">
+
+    <!-- 按 id + owner 查对话（含已删），用于 owner 校验 / by id and user id for ownership check -->
+    <select id="findByIdAndUserId" resultType="cn.edgarli.entity.Conversation">
+        SELECT id, user_id, title, title_manually_set, created_at, updated_at, deleted_at
+        FROM conversation
+        WHERE id = #{id} AND user_id = #{userId}
+    </select>
+
+    <!-- 当前用户的活跃对话（deleted_at IS NULL），按 updated_at DESC / active conversations desc by updated_at -->
+    <select id="findActiveByUserId" resultType="cn.edgarli.entity.Conversation">
+        SELECT id, user_id, title, title_manually_set, created_at, updated_at, deleted_at
+        FROM conversation
+        WHERE user_id = #{userId} AND deleted_at IS NULL
+        ORDER BY updated_at DESC
+    </select>
+
+    <!-- 当前用户软删中的对话（deleted_at IS NOT NULL），按 deleted_at DESC / trashed conversations desc by deleted_at -->
+    <select id="findDeletedByUserId" resultType="cn.edgarli.entity.Conversation">
+        SELECT id, user_id, title, title_manually_set, created_at, updated_at, deleted_at
+        FROM conversation
+        WHERE user_id = #{userId} AND deleted_at IS NOT NULL
+        ORDER BY deleted_at DESC
+    </select>
+
+    <!-- 改标题并强制翻 title_manually_set=TRUE，避免 AI 自动标题覆盖 / update title and lock manual flag -->
+    <update id="updateTitle">
+        UPDATE conversation
+        SET title = #{newTitle}, title_manually_set = TRUE
+        WHERE id = #{id}
+    </update>
+
+    <!-- 软删：deleted_at = NOW() / soft delete set deleted_at now -->
+    <update id="softDelete">
+        UPDATE conversation
+        SET deleted_at = NOW()
+        WHERE id = #{id}
+    </update>
+
+    <!-- 恢复：deleted_at = NULL / restore by clearing deleted_at -->
+    <update id="restore">
+        UPDATE conversation
+        SET deleted_at = NULL
+        WHERE id = #{id}
+    </update>
+
+    <!-- 显式维护 updated_at：H2 不依赖 ON UPDATE CURRENT_TIMESTAMP / explicit updated_at touch -->
+    <update id="touchUpdatedAt">
+        UPDATE conversation
+        SET updated_at = NOW()
+        WHERE id = #{id}
+    </update>
+
+    <!-- ConversationCleanupTask 用：删 deleted_at < cutoff 的所有行（H2 FK CASCADE 删 message） / hard delete trash older than cutoff -->
+    <delete id="hardDeleteOlderThan">
+        DELETE FROM conversation
+        WHERE deleted_at IS NOT NULL AND deleted_at &lt; #{cutoff}
+    </delete>
+
+</mapper>

@@ -31,7 +31,7 @@
 
 ### 1.2 单用户多条 Key 配置
 - 单条 Key 保存：`name, provider, api_key, base_url, model_name, enabled`。
-  - 证据：`UserApiKey` 实体字段、`UserApiKeyRequest` 请求体字段。
+  - 证据：`UserApiKey` 实体字段、`UserApiKeyDto` 请求体字段。
 - Key 可被创建、查询、修改、删除、设为默认。
   - 证据：`UserApiKeyController` 6 个端点。
 - 编辑时 `apiKey` 留空 = 保留原值。
@@ -70,7 +70,7 @@
 
 ### 1.7 Key 脱敏
 - 任何对外返回都不包含明文 `apiKey`，只暴露 `maskedApiKey` / `hasApiKey`。
-  - 证据：`UserApiKeyResponse` 字段 + `UserApiKeyService.mask()`。
+  - 证据：`UserApiKeyVo` 字段 + `UserApiKeyService.mask()`。
 - 长度 ≤ 4 时只返回 `****`。
   - 证据：`UserApiKeyService.mask`。
 - 来源：README "Key 响应脱敏" + 代码。
