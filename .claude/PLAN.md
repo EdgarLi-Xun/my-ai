@@ -523,3 +523,37 @@ SSE 错误路径异常级联到 GlobalExceptionHandler，导致一次 chat 失�
 ### 留给用户
 - 重启后端跑一次失败的 chat，确认日志只剩 ~2 行 + 前端 EventSource 看到 `event: error` 事件。
 - MiniMax provider 404 是真正的 chat 不通原因，留待后续单独决策（改 baseUrl / 换 provider / 修 protocol）。
+
+---
+
+## 第 17 次对话（2026-07-29）— ✅ 已完成（2026-07-29）
+
+### 目标
+修 SSE onNext 路径的断连噪声：`emitter.send(...)` 在客户端断开后抛 `AsyncRequestNotUsableException`（RuntimeException），从 `sendEvent` 的窄 catch 漏出 → 进入 Reactor 链 → 落入 `GlobalExceptionHandler` → 二次 `HttpMessageNotWritableException`。
+
+### 根因
+- `MessageCommandServiceImpl.sendEvent` 第 547 行只 catch `IOException | IllegalStateException`，未覆盖 `AsyncRequestNotUsableException` 等 RuntimeException。
+- 第 16 次对话的 P0 修的是 `completeWithError(err)` 路径（completion 阶段），但本次错的来源在 onNext 路径（P0 未覆盖）。
+- `GlobalExceptionHandler.handleException` 对 SSE 已 committed 的响应仍尝试写 `Result<>` → `HttpMessageNotWritableException` → 二次 ERROR 日志。
+
+### 关键决策
+- 把 `sendEvent` 的 catch 从 `IOException | IllegalStateException` 扩到 `Exception`，断连一律静默（debug 留痕）；既然所有"对外发送失败"都该吞掉，catch-all 是最简单最稳定的写法。
+- 把第 16 次对话"不动 GlobalExceptionHandler"的结论翻案：当时判"不必要"是建立在"P0 已断根"的假设上，实际 P0 没覆盖 onNext 路径。SSE 兜底改成 `null` 早写，防线前移，避免任何未来 SSE 路径再踩同一个坑。
+- 删 `import java.io.IOException;`（仅 catch 用，catch 范围扩大后变无效导入）。
+
+### 子步骤
+
+| # | 步骤 | 状态 |
+| - | --- | --- |
+| 1 | `MessageCommandServiceImpl.sendEvent` catch 改成 `Exception` + 删除 `IOException` import | ✅ |
+| 2 | `GlobalExceptionHandler.handleException` 加 `WebRequest` 参数 + SSE-committed 检测返回 `null` | ✅ |
+| 3 | `mvn -DskipTests package` 验证 | ✅（BUILD SUCCESS，2.297 s） |
+
+### 验证
+- `mvn -DskipTests package`：BUILD SUCCESS，`target/myAi-1.0-SNAPSHOT.jar` 已重新打包。
+- 运行时烟测：**未跑**。预期修改后一次 SSE 客户端断连应不再产生 GlobalExceptionHandler 的 ERROR 与二次 `HttpMessageNotWritableException` WARN；正常 SSE 路径（`event: token` / `event: done`）不受影响。
+
+### 显式不做
+- 不重做第 16 次对话的 P1 `MessageAggregator` logger level（保持 `OFF`）。
+- 不改 `safeComplete` / `emitter.onError` 逻辑（已在第 16 次对话落地）。
+- 不跑端到端 HTTP 烟测（运行时验证仍按 CLAUDE.md §7 约定不声称"全部通过"）。

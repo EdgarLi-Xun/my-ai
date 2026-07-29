@@ -22,7 +22,6 @@ import org.springframework.web.servlet.mvc.method.annotation.SseEmitter;
 import reactor.core.Disposable;
 import reactor.core.publisher.Flux;
 
-import java.io.IOException;
 import java.time.LocalDateTime;
 import java.util.Map;
 import java.util.Objects;
@@ -544,10 +543,14 @@ public class MessageCommandServiceImpl implements MessageCommandService {
     private static void sendEvent(SseEmitter emitter, String name, Map<String, ?> data) {
         try {
             emitter.send(SseEmitter.event().name(name).data(data));
-        } catch (IOException | IllegalStateException ex) {
-            // 客户端已断开 / emitter 已关闭 → 静默忽略 / client disconnected / emitter closed → silently ignore
+        } catch (Exception ex) {
+            // 客户端已断开 / emitter 已关闭 → 静默忽略（断连是正常现象，异常一律吞掉，避免污染日志与让 RuntimeException
+            // 漏进 Reactor 链再次冒泡至 GlobalExceptionHandler）
+            // Client disconnected / emitter closed → silently ignore. Disconnect is normal; swallow all exceptions
+            // so RuntimeException (e.g. AsyncRequestNotUsableException) does not leak back through the Reactor chain
+            // into the global exception handler.
             if (log.isDebugEnabled()) {
-                log.debug("Failed to send SSE event {}: {}", name, ex.getMessage());
+                log.debug("Failed to send SSE event {}: {}", name, ex.toString());
             }
         }
     }
