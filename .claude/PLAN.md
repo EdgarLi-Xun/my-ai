@@ -115,6 +115,8 @@
 4. 去 MiniMax 控制台撤销 / 轮换被泄露的 API Key
 5. 其他机器上的本地 clone 需 `git fetch && git reset --hard origin/master`（未推送的本地提交会丢）
 
+> ✅ 全部完成（2026-08-14，用户确认）。`git ls-remote origin HEAD` / `git ls-remote github HEAD` 已对齐到清理后 commit；MiniMax API Key 轮换由用户在 MiniMax 控制台完成。
+
 ---
 
 ## 第 10 次对话（2026-07-24）— ✅ 已完成（2026-07-24）
@@ -568,8 +570,8 @@ SSE 错误路径异常级联到 GlobalExceptionHandler，导致一次 chat 失�
 | 0 | PLAN.md | ✅ | 本表 |
 | 1 | ADR 0006 中文版 | ✅ | `docs/adr/0006-uni-app-app-architecture.md` |
 | 2 | ADR 0006 英文版 | ✅ | `docs/adr/0006-uni-app-app-architecture.en.md` |
-| 3 | Phase 1：SDK 骨架（`myAi-sdk/` 新仓库） | ⏳ 待用户通知 | `package.json` / `tsconfig.json` / `vitest.config.ts` / `src/{api,streaming,auth,storage,errors,media,push,utils,types}/` + 单测 |
-| 4 | Phase 2：App 仓库（`myAi-app/` 新仓库） | ⏳ 待用户通知 | uni-app x 项目初始化 + uni-ui 引入 + 8 个 `pages/`（index / config-backend / login / conversations / conversation/:id / keys / settings）|
+| 3 | Phase 1：SDK 骨架（`myAi-sdk/` 新仓库） | ✅ 已完成（2026-08-14） | `D:/MyWork/myAi-sdk/`：13 源文件 + 7 测试文件 + 52 dist 文件；npm test 92/92 全绿；覆盖率 93.15%；tsc --noEmit 0 错误；dist/ ESM + .d.ts 落地；file: 协议消费验证通过 |
+| 4 | Phase 2：App 仓库（`myAi-app/` 新仓库） | ✅ 已完成（2026-08-14） | `D:/MyWork/myAi-app/`：uni-app x + Vue 3 + Vite + TS；7 个 pages（index / config-backend / login / conversations / conversation-detail / keys / settings）；SDK 通过 `file:../myAi-sdk` 接入；npm run dev:h5 + build:h5 通过；vue-tsc 0 错误；342K 产物 |
 | 5 | Phase 3：现有 web 端接入 SDK（可选，非阻塞） | ⏳ 待用户通知 | `myAi/frontend/src/App.vue` 改 `import { ... } from '@myai/sdk'`；移除 `lib/sse.js` / `lib/markdown.js` |
 | 6 | Phase 4：文档收尾 | ⏳ 待用户通知 | CLAUDE.md §2/§4/§6（App 端项目事实 + 架构约定 + SSRF 误读澄清）+ `api.md` §6 SDK 调用契约 + `REQUIREMENTS.md` 1.10 |
 | 7 | 验证 | ⏳ 待用户通知 | `pnpm --filter @myai/sdk test` 全绿；4 端（Android / iOS / HarmonyOS / H5）跑通核心流程；`mvn -DskipTests package` 通过 |
