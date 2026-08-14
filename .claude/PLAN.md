@@ -4,6 +4,7 @@
 
 - `2026-07-23` — 从传统对话记录切换为 plan 持久化格式（见 [[plan-tracking]] 记忆）。
 - `2026-07-29` — 第 17 次对话：用 `/grill-with-docs` 落 ADR 0006「uni-app App 端架构 + 可配置后端地址」13 决策；新建 `docs/adr/0006-uni-app-app-architecture.{md,en.md}`。本轮**仅设计定稿**，待用户通知后启动 Phase 1 SDK 骨架。
+- `2026-08-14` — 归档两条已合并的 feature 分支：`refactor/adr-0005-three-layer-architecture` → tag `archive/refactor-adr-0005` (a9202a8)；`docs/adr-0006-uni-app-app-architecture` → tag `archive/docs-adr-0006` (885bd69)。本地 + 远端分支均已删除，仅 master 与 archive tag 保留。session 17（ADR 0006）4 阶段全部闭环。
 
 ---
 
