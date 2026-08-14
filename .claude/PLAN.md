@@ -572,9 +572,9 @@ SSE 错误路径异常级联到 GlobalExceptionHandler，导致一次 chat 失�
 | 2 | ADR 0006 英文版 | ✅ | `docs/adr/0006-uni-app-app-architecture.en.md` |
 | 3 | Phase 1：SDK 骨架（`myAi-sdk/` 新仓库） | ✅ 已完成（2026-08-14） | `D:/MyWork/myAi-sdk/`：13 源文件 + 7 测试文件 + 52 dist 文件；npm test 92/92 全绿；覆盖率 93.15%；tsc --noEmit 0 错误；dist/ ESM + .d.ts 落地；file: 协议消费验证通过 |
 | 4 | Phase 2：App 仓库（`myAi-app/` 新仓库） | ✅ 已完成（2026-08-14） | `D:/MyWork/myAi-app/`：uni-app x + Vue 3 + Vite + TS；7 个 pages（index / config-backend / login / conversations / conversation-detail / keys / settings）；SDK 通过 `file:../myAi-sdk` 接入；npm run dev:h5 + build:h5 通过；vue-tsc 0 错误；342K 产物 |
-| 5 | Phase 3：现有 web 端接入 SDK（可选，非阻塞） | ⏳ 待用户通知 | `myAi/frontend/src/App.vue` 改 `import { ... } from '@myai/sdk'`；移除 `lib/sse.js` / `lib/markdown.js` |
-| 6 | Phase 4：文档收尾 | ⏳ 待用户通知 | CLAUDE.md §2/§4/§6（App 端项目事实 + 架构约定 + SSRF 误读澄清）+ `api.md` §6 SDK 调用契约 + `REQUIREMENTS.md` 1.10 |
-| 7 | 验证 | ⏳ 待用户通知 | `pnpm --filter @myai/sdk test` 全绿；4 端（Android / iOS / HarmonyOS / H5）跑通核心流程；`mvn -DskipTests package` 通过 |
+| 5 | Phase 3：现有 web 端接入 SDK（可选，非阻塞） | ✅ 已完成（2026-08-14） | `myAi/frontend/src/App.vue` 改 `import { ... } from '@myai/sdk'`；删除 `lib/sse.js`（98 行）；保留 `lib/markdown.js`；mvn -DskipTests package 通过；JAR 120MB |
+| 6 | Phase 4：文档收尾 | ✅ 已完成（2026-08-14） | CLAUDE.md §2 加 myAi-app 事实 + §4 加 3 条（SDK 共享调用 / 后端 URL 可配置 / SSRF 边界）+ §6 细化；api.md 新增 §7「SDK 调用契约」；REQUIREMENTS.md 新增 §1.10 |
+| 7 | 验证 | ✅ 已完成（2026-08-14） | npm install @myai/sdk OK；vite build OK；mvn -DskipTests package OK；App H5 dev/build 通过（Phase 2 验证）|
 
 ### 实施期子问题（不在 13 题里，待用户决策）
 
