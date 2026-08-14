@@ -310,3 +310,119 @@ Authorization: Bearer <token>
 ---
 
 > ADR 0003 的 §5.1-5.4（规划版本，含 4030 默认 Key 不可用、`marked` 渲染等）已过时；以本文件 §5（已实现）与 ADR 修订为准。
+
+## 7. SDK 调用契约（ADR 0006，2026-08-14 落地）
+
+> 跨 web + uni-app x App 共享的 TypeScript SDK 位于 `../myAi-sdk/`（独立 git 仓库）。本节列出 SDK 暴露的关键导出与对应后端端点，开发者新增功能时**先在 SDK 内补齐接口，再在两端消费**——不要在 web / App 任一端单独写 `fetch` 调用。
+
+### 7.1 模块总览
+
+| 模块 | 主要导出 | 对应后端范围 |
+| --- | --- | --- |
+| `types` | `UserVo` / `AuthVo` / `UserApiKeyVo` / `ConversationVo` / `MessageVo` / `ProviderVo` / `AiCallLogVo` / `AuditLogVo` + `Result<T>` + `Role` / `MessageRole` / `ProviderProtocol` | §1 / §2 / §3 / §5 / §6 全量 |
+| `errors` | `BizCode`（12 常量）+ `SdkError` + 12 类型化子类（`UnauthorizedError` / `ForbiddenError` / `ConversationNotFoundError` / `DefaultKeyUnavailableError` 等）+ `NetworkError` + `errorFromCode` + `unwrap` / `unwrapOrNull` / `unwrapVoid` | §0 错误码表 |
+| `utils` | `validateBackendUrl(url, opts)` + `sleep` + `retry` + `shortTraceId` + `toQueryString` | §0（ping 校验）+ 通用 |
+| `storage` | `StorageAdapter` 接口 + `LocalStorageAdapter` / `UniStorageAdapter` / `InMemoryAdapter` + `SdkStorage` + `StorageKey`（3 个键：Token / BackendUrl / ActiveConversationId） | 客户端持久化（不在后端） |
+| `auth` | `AuthProvider` 接口 + `AuthService`（login / register / logout / getCurrentUser / isAuthenticated / setOnUnauthorized + notifyUnauthorized） | §0.5 |
+| `api` | `HttpClient` 接口 + `FetchHttpClient` + `ProviderApi` / `UserApiKeyApi` / `ConversationApi` / `MessageApi` / `LogsApi` | §3 / §2 / §5 / §6 |
+| `streaming` | `SseParser` + `frameToEvent` + `createStreamingResponse` + `streamConversationMessage` + `streamRegenerate` + `StreamingResponse` | §5 SSE 端点（`POST /api/conversations/{id}/messages` + `POST /api/messages/{id}/regenerate`） |
+| `media` / `push` | （v2 占位，仅空桶）/ (empty barrel for v2) | §0（未实现项） |
+
+### 7.2 关键调用模式
+
+**HTTP 客户端**：
+
+```typescript
+import {
+  FetchHttpClient, AuthService, createStorage, LocalStorageAdapter,
+  ProviderApi, UserApiKeyApi, ConversationApi, MessageApi, LogsApi,
+  unwrap, errorFromCode,
+} from '@myai/sdk'
+
+const storage = createStorage(new LocalStorageAdapter())
+const http = new FetchHttpClient({
+  baseUrl: '',                          // web 同源；App 端 = 用户填的 backendUrl
+  getToken: () => storage.getToken(),
+  onUnauthorized: () => {               // 4010 → 清 token + 触发上层 handler
+    storage.clearToken()
+    storage.clearActiveConversationId()
+  },
+})
+const auth = new AuthService({ http, storage })
+const userApiKeyApi = new UserApiKeyApi(http)
+// …其他 4 个 API 类同模式
+```
+
+**登录与 4010 自愈**：
+
+```typescript
+try {
+  const { token, userId, name, email } = await auth.login({
+    email, password,
+  })
+  // token 已自动写入 storage；后续 http.request 自动注入 Authorization: Bearer
+} catch (e) {
+  // e 是 SdkError 子类；err.code 是 BizCode 常量（如 4000 / 4010 / 4035）
+  if (e.code === 4010) { /* token 无效 */ }
+}
+```
+
+**SSE 流式**：
+
+```typescript
+import { streamConversationMessage, streamRegenerate } from '@myai/sdk'
+
+// 发消息：POST /api/conversations/{conversationId}/messages
+const stream = streamConversationMessage({
+  baseUrl: '', conversationId: 7, content: 'hi',
+  getToken: () => storage.getToken(),
+  signal: abortController.signal,
+})
+for await (const ev of stream.events()) {
+  if (ev.type === 'token') append(ev.text)
+  else if (ev.type === 'done') { reload(); break }
+  else if (ev.type === 'error') { showError(ev.code, ev.message); break }
+}
+// stream.abort() 取消；stream.done Promise resolve/reject
+```
+
+**后端 URL 校验（App 端首启 / 改 URL）**：
+
+```typescript
+import { validateBackendUrl } from '@myai/sdk'
+
+const r = await validateBackendUrl('https://api.example.com', { timeoutMs: 5000 })
+if (!r.ok) showError(r.error)
+// 仅校验 http/https 协议 + GET /api/providers 返回 200；不拦截内网 IP（见 CLAUDE.md §4-25）
+```
+
+### 7.3 端点 ↔ API 类对应表
+
+| 后端端点 | SDK API 方法 | 路径形态 |
+| --- | --- | --- |
+| §0.5 `POST /api/auth/register` | `auth.register(dto)` | `/api/auth/register` |
+| §0.5 `POST /api/auth/login` | `auth.login(dto)` | `/api/auth/login` |
+| §0.5 `GET /api/auth/me` | `auth.getCurrentUser()` | `/api/auth/me` |
+| §3 `GET /api/providers` | `providerApi.list()` | `/api/providers` |
+| §2 `GET/POST/PUT/DELETE /api/users/{userId}/keys[/{keyId}[/default]]` | `userApiKeyApi.list(userId)` / `.get(uid, kid)` / `.create(uid, dto)` / `.update(uid, kid, dto)` / `.delete(uid, kid)` / `.setDefault(uid, kid)` | 同上 |
+| §5 `POST /api/conversations` | `conversationApi.create()` | `/api/conversations` |
+| §5 `GET /api/conversations?include_deleted=…` | `conversationApi.list({ includeDeleted })` | 同上 |
+| §5 `PATCH/DELETE/POST /api/conversations/{id}[/restore\|/permanent]` | `conversationApi.update/update(id, dto)` / `.softDelete(id)` / `.restore(id)` / `.hardDelete(id)` | 同上 |
+| §5 `GET /api/conversations/{cid}/messages?include_orphaned=…` | `messageApi.list(cid, { includeOrphaned })` | 同上 |
+| §5 `PATCH /api/messages/{id}` | `messageApi.update(id, dto)` | `/api/messages/{id}` |
+| §5 `POST /api/conversations/{id}/messages`（SSE） | `streamConversationMessage({ conversationId, content, ... })` | 同上 |
+| §5 `POST /api/messages/{id}/regenerate`（SSE） | `streamRegenerate({ messageId, ... })` | 同上 |
+| §6 `GET /api/logs/ai-calls[/{id}]` | `logsApi.listAiCalls(opts)` / `.getAiCall(id)` | 走 `requestRaw`（无 Result 外壳） |
+| §6 `GET /api/logs/audit[/{id}]` | `logsApi.listAuditLogs(opts)` / `.getAuditLog(id)` | 同上 |
+
+### 7.4 错误处理契约
+
+- 业务错误 → SDK 抛对应 SdkError 子类（`code` 字段为 BizCode 常量，`message` 为后端 message）
+- 网络错误 → SDK 抛 `NetworkError`（`code = 0`）
+- SSE 业务错误 → SDK 仍走 `BizException` 流：`for await` 拿到 `{ type: 'error', code, message }`；不要把 SSE error 当作 Promise reject 处理
+
+### 7.5 已知缺口
+
+- v2 占位 `media` / `push` 暂未实现（图片上传 + 推送通知，留待 v2 触发）
+- 后端 `/api/app/**` 命名空间未启用（ADR 0006 Q4 推迟）；当前 SDK 消费现有 `/api/**`
+- 内网 IP 黑名单未落地（CLAUDE.md §4-25）；部署到不可信用户前必须补齐

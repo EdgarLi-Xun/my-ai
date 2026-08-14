@@ -104,6 +104,28 @@
 - admin bootstrap：`my-ai.admin.emails` 绑定 `MYAI_ADMIN_EMAILS` env var（逗号分隔）。无 fallback — env var 没配则系统无管理员，日志 API 任何人都调不通。
 - 来源：2026-07-27 `/grill-with-docs` 20 题决策 + 2026-07-28 第 14 次对话实施。
 
+### 1.10 移动 App 端（已设计，已实现 MVP — 2026-08-14）
+- 设计定稿见 ADR `docs/adr/0006-uni-app-app-architecture.md`：在 web 单页形态之外新增移动 App 形态（uni-app x），后端**零改动**，通过共享 `@myai/sdk` 复用 web 端全部能力。
+- 13 决策摘要：Android + iOS + HarmonyOS NEXT + H5 四端；uni-app x 框架；web / App 双仓库物理隔离 + 共享 SDK 独立仓库；后端完全复用 + 预留 `/api/app/**` 命名空间（推迟）；TypeScript SDK 通过 uts interop 消费；MVP = email/密码 + JWT；Key 安全模式与 web 一致（前端只持掩码）；保留 SSE + 平台抽象；uni-ui 组件库；MVP 1:1 镜像 web；自定义基座 + 本地分发 + 离线打包；SDK vitest + App 手测；后端 URL 硬编码默认 + 可改（仅 App 端）。
+- 实现证据：
+  - **独立 SDK 仓库** `../myAi-sdk/`：`@myai/sdk` 0.1.0，9 模块（types/errors/utils/storage/auth/api/streaming + media/push v2 占位），92/92 单测全绿，覆盖率 93.15%；path-only 分发；不申请 npm 发布。
+  - **独立 App 仓库** `../myAi-app/`：uni-app x + Vue 3 + Vite + TS 模板；7 个 pages（index / config-backend / login / conversations / conversation-detail / keys / settings）；SDK 通过 `"@myai/sdk": "file:../myAi-sdk"` 接入；`npm run dev:h5` / `build:h5` 通过（342K 产物）；`vue-tsc --noEmit` 0 错误；包名 cn.edgarli.myai。
+  - **web 端接入 SDK**（Phase 3）：`myAi/frontend/package.json` 加 `"@myai/sdk": "file:../../myAi-sdk"`；`App.vue` 删除自实现 `lib/sse.js`（98 行），保留 `lib/markdown.js`（UI 渲染职责），改用 SDK 的 `FetchHttpClient` + `AuthService` + 5 个 API 类 + `streamConversationMessage` / `streamRegenerate`；4010 自愈由 SDK `onUnauthorized` 接管。
+- App 端独有约束：
+  - **后端 URL 可配置**：用户在 `config-backend` 页填写 URL → SDK `validateBackendUrl` ping `/api/providers` 校验（5s 超时） → 落 `myai.backendUrl` → `rebuildSdk(backendUrl)` 重建实例。**web 端不可暴露此能力**。
+  - **平台存储**：App 用 `UniStorageAdapter`（uni.setStorageSync），H5 用 `LocalStorageAdapter`，通过 `globalThis.uni` 自动切换。
+- 推迟到 v2（明确不做）：
+  - 推送通知（iOS APNs / Android FCM / HarmonyOS Push Kit）
+  - 微信扫码登录（见 §1.0.1 / ADR 0002）
+  - 华为账号 / Apple ID 登录
+  - 图片上传对话 + 多模态
+  - 上架应用商店
+  - 设备指纹 / 风控
+  - 多后端 URL profile
+  - 内网 IP 黑名单（SSRF 加固；当前仅协议 + ping 校验）
+- 验证范围：H5 dev/build 通过；iOS / Android / HarmonyOS NEXT 编译需 HBuilderX GUI（未跑）。App 模拟器 / 真机端到端按 CLAUDE.md §7 约定不声称"全部通过"。
+- 来源：2026-07-29 `/grill-with-docs` 13 题决策 + 2026-08-14 第 17/18 次对话实施。
+
 ## 2. 非功能需求 / 约束
 
 ### 2.1 数据持久化
@@ -145,6 +167,10 @@
 | 限流 / CORS 配置 | 缺口 | 未发现显式限流或 CORS Bean；本地访问默认同源 |
 | 正式 API 文档 / OpenAPI | 缺口 | 当前仅有本仓库 `.claude/api.md` 与 README，未引入 springdoc / swagger |
 | README 与代码的偏差 | 已知 | ORM 实际为 MyBatis-Flex；端口实际为 8031；兼容类实际为 `FlexConfig`——以代码为准 |
+| 推送通知 | 显式无 | iOS APNs / Android FCM / HarmonyOS Push Kit；SDK `src/push/` 是 v2 占位 |
+| 图片上传对话 | 显式无 | SDK `src/media/` 是 v2 占位 |
+| 上架应用商店 | 显式无 | ADR 0006 Q11 推迟；当前仅本地分发 |
+| App 端 iOS/HarmonyOS 编译 | 缺口 | 需 HBuilderX GUI 打开；当前仅验证 H5 |
 
 ## 4. 变更追踪
 
@@ -152,3 +178,4 @@
 - `2026-07-24`：新增 1.0.1「微信扫码登录（已设计，未实现）」，对应 ADR 0002。
 - `2026-07-27`：新增 1.8「对话与消息（已设计，未实现）」，对应 ADR 0003；19 题 grilling 决策已落 PLAN.md 第 12 次对话。
 - `2026-07-28`：新增 1.9「可观测性与日志（已实现）」，对应 ADR 0004；20 题 grilling 决策 + 阶段 1-7 实施已落 PLAN.md 第 14 次对话。
+- `2026-08-14`：新增 1.10「移动 App 端（已设计，已实现 MVP）」，对应 ADR 0006；13 题 grilling 决策 + Phase 1 SDK + Phase 2 App + Phase 3 web 接入 + Phase 4 文档收尾全部完成；新增 5 项缺口（推送 / 图片上传 / 上架 / App 编译）。

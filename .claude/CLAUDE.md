@@ -47,6 +47,23 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 - **资源**：`src/main/resources/{application.yml, application-my.yml, schema.sql}`。
 - **XML mapper**：`src/main/resources/cn/edgarli/mapper/{ConversationMapper.xml, MessageMapper.xml}`——Conversation + Message 业务查询全迁 XML（ADR 0005 §8）。
 - **前端源**：`frontend/src/{App.vue, main.js, style.css}`；构建产物：`src/main/resources/static/{index.html, assets/}`。
+- **共享 SDK（ADR 0006 Q5）**：跨 web + uni-app x App 复用的 TypeScript SDK 在独立仓库 `../myAi-sdk/`（`@myai/sdk` 0.1.0，path-only 分发）。后端**零改动**——web 端通过 `"@myai/sdk": "file:../../myAi-sdk"`、App 端通过 `"file:../myAi-sdk"` 消费同一份 API 契约。SDK 7 模块（types / errors / utils / storage / auth / api / streaming）+ 2 个 v2 占位（media / push），单测 92/92 全绿 + 覆盖率 93.15%。详细调用契约见 `.claude/api.md` §6。
+
+### App 端（独立仓库 myAi-app/，ADR 0006 第 17 次对话 Phase 2）
+
+| 项 | 实际值 |
+| --- | --- |
+| 仓库位置 | `D:/MyWork/myAi-app/`（与 myAi/ 平级，独立 git） |
+| 框架 | uni-app x + Vue 3 + Vite + TS（`@dcloudio/uni-app` 3.0.0-5020420260813001 + `@dcloudio/vite-plugin-uni`） |
+| 覆盖目标 | H5（已验证）+ iOS / Android / HarmonyOS NEXT（需 HBuilderX GUI 编译） |
+| 包名 / App 名 | cn.edgarli.myai / MyAi（mp-harmony.package 段已配） |
+| 版本 | 0.1.0 MVP（manifest.versionName + package.json.version 同步） |
+| 页面（7） | pages/index / config-backend / login / conversations / conversation-detail / keys / settings |
+| SDK 集成 | src/sdk/index.ts（bootSdk/rebuildSdk/destroySdk + 7 单例 + 4010 钩子 + 平台存储选择） |
+| 后端 URL | 可配置，首启 config-backend 页，ping `/api/providers` 校验；持久化键 `myai.backendUrl` |
+| 编译命令 | `npm run dev:h5` / `npm run build:h5`（纯 CLI）；App 端编译留 HBuilderX |
+| 验证范围 | H5 dev/build 通过 + vue-tsc 0 错误；iOS/Android/HarmonyOS 未跑（按 CLAUDE.md §7 约定） |
+| 推迟 | 推送 / 微信扫码 / 图片上传 / 上架 / Vue-i18n / uni-ui 实际使用 → v2 或 Phase 3 |
 
 ## 3. 标准命令
 
@@ -112,6 +129,9 @@ Maven 不会自动触发 `npm run build`；改前端源码后必须手动构建�
 20. **Service 接口/Impl 分离（ADR 0005 §2）**：`cn.edgarli.service.*Service` 是接口，`cn.edgarli.service.impl.*ServiceImpl` 是实现（impl 在 `impl/` 子包）。`MessageService` 是组合接口（继承 `MessageQueryService` + `MessageCommandService`），controller 注入 1 个接口同时拿到查询与命令能力。`MessageSupport` 是 Query/Command impl 共用的 helper（私有方法抽出）。
 21. **XML mapper（ADR 0005 §8）**：仅 Conversation + Message 走 XML，业务查询全部从 BaseMapper 注解迁出。XML 接口方法必须 `@Param` 标注（避免依赖 `-parameters` 编译器 flag）。`User` / `UserApiKey` / `AiCallLog` / `AuditLog` 仍走 MyBatis-Flex `@Select` 注解或 QueryWrapper（动态查询用注解够简洁）。`MapperScan` 通过 `@MapperScan(basePackages = "cn.edgarli.mapper", annotationClass = Mapper.class)` 仅扫描带 `@Mapper` 注解的接口。
 22. **双语注释（ADR 0005 §9）**：所有 Java 源文件 + 2 个 XML mapper 的方法 Javadoc、`@param` / `@return` / `@throws`、impl 内的非平凡局部变量 `//`，都按"中文 + 英文同行"格式（例：`@param userId 用户 ID / user identifier`）。entity / DTO / VO 字段同样双语。新增文件必须遵循；存量文件已全部补齐（81 个 Java + 2 个 XML）。
+23. **SDK 共享调用契约（ADR 0006）**：web / App 共享 `@myai/sdk`（path-only）作为唯一 API 客户端；不再各自写 `fetch` 包装。web 端仅维护 `App.vue` 一处 SDK 实例 + 一处 SSE 流式接入（已删除 `lib/sse.js`，保留 `lib/markdown.js` 作 UI 渲染层职责）。新增端点必须先在 SDK 内补齐接口，再在两端消费；不要在 web / App 任一端单独写后端协议调用。
+24. **后端 URL 可配置（ADR 0006 Q13）**：web 端固定同源 `/api`（Vite proxy 或 Spring Boot 同源），**不可**让 web 用户改 baseUrl；App 端用户在 `config-backend` 页填写 URL → 走 SDK `validateBackendUrl` ping `/api/providers` 校验（5s 超时） → 落 `myai.backendUrl` → `rebuildSdk(backendUrl)` 重建实例。不要把 App 的 URL 配置能力下放到 web；不要在 web 端暴露任何让用户输入后端地址的入口。
+25. **SSRF 边界（ADR 0006 §6）**：用户自填的 `backendUrl` 经 SDK `validateBackendUrl` 校验，仅允许 `http` / `https` 协议且要求 `GET /api/providers` 返回 200；超时 5s 即拒绝。但**未做内网 IP 白名单/黑名单**——内网/loopback/链路本地地址的拦截不在本期范围，部署到不可信用户场景前必须补齐（建议：用 Spring 的 `RequestPredicate` 或独立过滤器在 outbound HTTP 处拦截 RFC1918 / 127.0.0.0/8 / 169.254.0.0/16 / ::1 等地址段）。
 
 ### 数据模型（与 schema.sql 对齐）
 
@@ -143,7 +163,7 @@ idx_user_api_key_user_id on (user_id)
 - **认证已加**：JWT 鉴权已上线，但仍是单机本地应用，Token 无刷新机制、明文存于浏览器 `localStorage`（键 `myai.token`）—— 同源 JS 可读、非 HttpOnly cookie、非会话级；活跃会话 id 也存 `localStorage`（键 `myai.activeConversationId`）。不要把该版本直接暴露到公网。
 - 4010 / 主动登出会清掉 `myai.token` 与 `myai.activeConversationId`。
 - **API Key 明文** 存于本机 H2 文件；**不会**通过 API、`toString()`、MyBatis 参数日志输出。
-- **自定义 baseUrl** 会让后端对用户填写的地址发起出站请求（SSRF 风险）。不要把该能力暴露给不可信用户。
+- **自定义 baseUrl** 会让后端对用户填写的地址发起出站请求（SSRF 风险）。**当前仅 App 端**（`myAi-app/`）暴露该能力；web 端不可让用户输入后端地址。SDK `validateBackendUrl` 仅做协议 + ping 校验，未拦截内网 IP，部署到不可信用户场景前需补 RFC1918/loopback 黑名单（见 §4-25）。
 - 未实现加密、轮换、配额、生产级多租户隔离。**审计已通过 ADR 0004 落地**（`audit_log` 记录 Key / 对话 增删改；仅 admin 可查）。
 - **管理员边界**：admin 角色只能由 env var `MYAI_ADMIN_EMAILS` 授予，注册 / 登录时按邮箱匹配；不可通过 API 自封。日志查询端点 `/api/logs/**` 仅 admin 可访问，普通用户调会得 403。
 

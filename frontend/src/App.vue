@@ -240,11 +240,44 @@
 <script setup>
 import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { renderMarkdown } from './lib/markdown.js'
-import { consumeSSE } from './lib/sse.js'
+import {
+  FetchHttpClient,
+  AuthService,
+  ProviderApi,
+  UserApiKeyApi,
+  ConversationApi,
+  MessageApi,
+  LocalStorageAdapter,
+  createStorage,
+  unwrap,
+  streamConversationMessage,
+  streamRegenerate,
+} from '@myai/sdk'
 
 const TOKEN_KEY = 'myai.token'
 const ACTIVE_CONV_KEY = 'myai.last_active_conversation_id'
 const BROADCAST_CHANNEL = 'my-ai-conversations'
+
+// ============ SDK 单例 / SDK singletons ============
+// baseUrl 留空字符串：dev 走 Vite /api 代理；prod 走 Spring Boot 同源 /api。
+// baseUrl empty: dev goes through Vite /api proxy; prod goes through Spring Boot same-origin /api.
+const sdkStorage = createStorage(new LocalStorageAdapter())
+const http = new FetchHttpClient({
+  baseUrl: '',
+  getToken: () => localStorage.getItem(TOKEN_KEY),
+  onUnauthorized: () => {
+    // 4010 → 清前端态 + 保留 onMounted 重新登录的逻辑
+    // 4010 → clear frontend state; onMounted will re-trigger login on next interaction
+    localStorage.removeItem(TOKEN_KEY)
+    token.value = null
+    currentUser.value = null
+  },
+})
+const authService = new AuthService({ http, storage: sdkStorage })
+const providerApi = new ProviderApi(http)
+const userApiKeyApi = new UserApiKeyApi(http)
+const conversationApi = new ConversationApi(http)
+const messageApi = new MessageApi(http)
 
 // ============ 登录态 ============
 const token = ref(null)
@@ -299,30 +332,24 @@ const visibleMessages = computed(() =>
   activeMessages.value.filter(m => !m.isOrphaned)
 )
 
-// ============ api 封装 ============
+// ============ api 封装（转 SDK）/ api wrapper (delegates to SDK) ============
+// 保留旧签名（接 path 含前导 /api），内部委托给 SDK 的 FetchHttpClient + unwrap。
+// Preserve old signature (accepts path with leading /api); delegates to SDK FetchHttpClient + unwrap.
 async function api(url, options = {}) {
-  const headers = { ...(options.headers || {}) }
-  if (token.value) headers['Authorization'] = 'Bearer ' + token.value
-  const response = await fetch(url, { ...options, headers })
-  const text = await response.text()
-  let body = null
-  if (text) {
-    try { body = JSON.parse(text) } catch { body = null }
+  // SDK 不接受前导 /api（baseUrl 已含或同源时省略）；剥掉以保持原 path 形式一致。
+  // SDK doesn't expect leading /api (baseUrl is empty for same-origin); strip to align with SDK paths.
+  const path = url.replace(/^\/api/, '')
+  let body
+  if (options.body && typeof options.body === 'string') {
+    body = JSON.parse(options.body)
+  } else if (options.body !== undefined) {
+    body = options.body
   }
-  if (body && typeof body === 'object' && 'code' in body && 'message' in body) {
-    if (body.code === 4010) {
-      localStorage.removeItem(TOKEN_KEY)
-      token.value = null
-      currentUser.value = null
-      throw new Error('请重新登录')
-    }
-    if (body.code !== 0) {
-      throw new Error(body.message || `业务错误 ${body.code}`)
-    }
-    return body.data
-  }
-  if (!response.ok) throw new Error(text || `HTTP ${response.status}`)
-  return body
+  const result = await http.request(path, {
+    method: options.method || 'GET',
+    body,
+  })
+  return unwrap(result)
 }
 
 // ============ 生命周期 ============
@@ -637,34 +664,36 @@ async function send() {
   })
   streaming.value = true
   streamingContent.value = ''
-  abortCtl.value = new AbortController()
+  const abortController = new AbortController()
+  abortCtl.value = abortController
 
+  // SDK 流式 / SDK streaming
+  let sseStream = null
   try {
-    await consumeSSE(
-      `/api/conversations/${activeConversationId.value}/messages`,
-      {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json', 'Authorization': 'Bearer ' + token.value },
-        body: JSON.stringify({ content: text }),
-        signal: abortCtl.value.signal
-      },
-      {
-        onToken: tk => { streamingContent.value += tk },
-        onDone: async payload => {
-          await loadMessages()
-          await loadConversations()
-          // 同时广播 conversation:updated，让其它 tab 侧栏按 updated_at 重新排序
-          broadcast('conversation:updated', { conversationId: activeConversationId.value })
-          broadcast('message:created', { conversationId: activeConversationId.value, messageId: payload.messageId })
-        },
-        onError: payload => {
-          error.value = `AI 调用失败 (${payload.code})：${payload.message}`
-        }
+    sseStream = streamConversationMessage({
+      baseUrl: '',
+      conversationId: activeConversationId.value,
+      content: text,
+      getToken: () => localStorage.getItem(TOKEN_KEY),
+      signal: abortController.signal,
+    })
+    for await (const ev of sseStream.events()) {
+      if (ev.type === 'token') {
+        streamingContent.value += ev.text
+      } else if (ev.type === 'done') {
+        await loadMessages()
+        await loadConversations()
+        broadcast('conversation:updated', { conversationId: activeConversationId.value })
+        broadcast('message:created', { conversationId: activeConversationId.value, messageId: ev.messageId })
+        break
+      } else if (ev.type === 'error') {
+        error.value = `AI 调用失败 (${ev.code})：${ev.message}`
+        break
       }
-    )
+    }
   } catch (e) {
-    if (e.name !== 'AbortError') {
-      error.value = '请求失败：' + (e.message || String(e))
+    if (e?.name !== 'AbortError') {
+      error.value = '请求失败：' + (e?.message || String(e))
     }
   } finally {
     streaming.value = false
@@ -711,28 +740,30 @@ async function regenerateMessage(m) {
   if (streaming.value) return
   streaming.value = true
   streamingContent.value = ''
-  abortCtl.value = new AbortController()
+  const abortController = new AbortController()
+  abortCtl.value = abortController
+
   try {
-    await consumeSSE(
-      `/api/messages/${m.id}/regenerate`,
-      {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json', 'Authorization': 'Bearer ' + token.value },
-        signal: abortCtl.value.signal
-      },
-      {
-        onToken: tk => { streamingContent.value += tk },
-        onDone: async () => {
-          await loadMessages()
-          await loadConversations()
-        },
-        onError: payload => {
-          error.value = `重新生成失败 (${payload.code})：${payload.message}`
-        }
+    const sseStream = streamRegenerate({
+      baseUrl: '',
+      messageId: m.id,
+      getToken: () => localStorage.getItem(TOKEN_KEY),
+      signal: abortController.signal,
+    })
+    for await (const ev of sseStream.events()) {
+      if (ev.type === 'token') {
+        streamingContent.value += ev.text
+      } else if (ev.type === 'done') {
+        await loadMessages()
+        await loadConversations()
+        break
+      } else if (ev.type === 'error') {
+        error.value = `重新生成失败 (${ev.code})：${ev.message}`
+        break
       }
-    )
+    }
   } catch (e) {
-    if (e.name !== 'AbortError') error.value = '请求失败：' + (e.message || String(e))
+    if (e?.name !== 'AbortError') error.value = '请求失败：' + (e?.message || String(e))
   } finally {
     streaming.value = false
     streamingContent.value = ''
