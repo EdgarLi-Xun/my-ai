@@ -830,19 +830,21 @@ function scrollToBottom() {
   border-radius: 8px;
   font-size: 14px;
 }
-/* 密码框 wrapper：相对定位容纳眼睛按钮 / password wrapper: relative to host the eye button */
-.password-field { position: relative; }
-/* 给眼睛按钮留出右侧空间 / reserve space on the right for the eye button */
-.password-field input { padding-right: 36px; }
-/* 眼睛切换按钮：绝对定位右侧、垂直居中 / eye toggle: absolute right, vertically centered */
+/* 密码框 wrapper：flex 让 input 与按钮同行，按钮用负 margin 覆盖到 input padding 区 / password wrapper: flex row so input + button share line, button overlaps input padding via negative margin */
+.password-field {
+  display: flex;
+  align-items: stretch;
+}
+/* input 占满剩余宽度，padding-right 给按钮让位（按钮宽 32px，含 2px 间距）/ input fills row, right padding reserves space for the eye button */
+.password-field input {
+  flex: 1;
+  min-width: 0;
+  padding-right: 36px;
+}
+/* 眼睛切换按钮：与 input 同行，负 margin-left 把按钮拉到 input 右侧 padding 区，视觉上在 input 内部 / button shares row with input; negative margin pulls it over input padding so it appears inside the input */
 .password-toggle {
-  position: absolute;
-  right: 6px;
-  top: 50%;
-  transform: translateY(-50%);
-  width: 28px;
-  height: 28px;
-  padding: 0;
+  margin-left: -32px;
+  width: 32px;
   border: none;
   background: transparent;
   cursor: pointer;
@@ -850,6 +852,7 @@ function scrollToBottom() {
   line-height: 1;
   color: #666;
   border-radius: 4px;
+  align-self: center;
 }
 .password-toggle:hover:not(:disabled) { background: #f0f0f0; color: #333; }
 .password-toggle:disabled { cursor: not-allowed; opacity: 0.5; }
