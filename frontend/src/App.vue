@@ -354,16 +354,25 @@ const visibleMessages = computed(() =>
 async function api(url, options = {}) {
   // SDK 期望 path 含前导 /api（baseUrl 仅 origin，不含路径前缀）；直接透传 url。
   // SDK expects path with leading /api (baseUrl is origin only, no path prefix); pass url through.
+  const method = options.method || 'GET'
   let body
   if (options.body && typeof options.body === 'string') {
     body = JSON.parse(options.body)
   } else if (options.body !== undefined) {
     body = options.body
   }
-  const result = await http.request(url, {
-    method: options.method || 'GET',
-    body,
-  })
+  const result = await http.request(url, { method, body })
+  // DELETE 端点后端统一返回 Result<Void>（data: null），必须用 unwrapVoid；
+  // 否则 unwrap 会把 data:null 当成失败抛 InternalError，导致前端 catch 显示"xxx失败：success"。
+  // DELETE endpoints return Result<Void> (data: null); must use unwrapVoid to avoid
+  // unwrap throwing InternalError on the null data and the catch block displaying
+  // "xxx failed: success" even though the delete actually succeeded.
+  // PUT 不在此分支，因 setDefault 等 PUT 返回 Result<UserApiKeyVo>（data 非空）。
+  // PUT stays on unwrap since e.g. setDefault returns Result<UserApiKeyVo> with non-null data.
+  if (method === 'DELETE') {
+    unwrapVoid(result)
+    return
+  }
   return unwrap(result)
 }
 
