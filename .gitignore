@@ -43,3 +43,5 @@ logs/
 src/main/resources/static/assets/**
 !src/main/resources/static/assets/
 src/main/resources/static/index.html
+/.idea/
+/src/main/java/rebel.xml
