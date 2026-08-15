@@ -336,16 +336,15 @@ const visibleMessages = computed(() =>
 // 保留旧签名（接 path 含前导 /api），内部委托给 SDK 的 FetchHttpClient + unwrap。
 // Preserve old signature (accepts path with leading /api); delegates to SDK FetchHttpClient + unwrap.
 async function api(url, options = {}) {
-  // SDK 不接受前导 /api（baseUrl 已含或同源时省略）；剥掉以保持原 path 形式一致。
-  // SDK doesn't expect leading /api (baseUrl is empty for same-origin); strip to align with SDK paths.
-  const path = url.replace(/^\/api/, '')
+  // SDK 期望 path 含前导 /api（baseUrl 仅 origin，不含路径前缀）；直接透传 url。
+  // SDK expects path with leading /api (baseUrl is origin only, no path prefix); pass url through.
   let body
   if (options.body && typeof options.body === 'string') {
     body = JSON.parse(options.body)
   } else if (options.body !== undefined) {
     body = options.body
   }
-  const result = await http.request(path, {
+  const result = await http.request(url, {
     method: options.method || 'GET',
     body,
   })
