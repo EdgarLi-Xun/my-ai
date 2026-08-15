@@ -17,13 +17,27 @@
             placeholder="邮箱"
             :disabled="authLoading"
           />
-          <input
-            v-model="auth.password"
-            type="password"
-            autocomplete="current-password"
-            placeholder="密码（至少 6 位）"
-            :disabled="authLoading"
-          />
+          <div class="password-field">
+            <input
+              v-model="auth.password"
+              :type="showPassword ? 'text' : 'password'"
+              autocomplete="current-password"
+              placeholder="密码（至少 6 位）"
+              :disabled="authLoading"
+            />
+            <!-- 切换密码可见性（type=button 避免触发表单提交） / toggle password visibility (type=button to avoid form submit) -->
+            <button
+              type="button"
+              class="password-toggle"
+              :aria-label="showPassword ? '隐藏密码' : '显示密码'"
+              :title="showPassword ? '隐藏密码 / hide password' : '显示密码 / show password'"
+              :disabled="authLoading"
+              @click="showPassword = !showPassword"
+            >
+              <!-- Unicode emoji 作为图标（避免引入字体图标库） / Unicode emoji as icon (no font-icon dependency) -->
+              <span aria-hidden="true">{{ showPassword ? '🙈' : '👁' }}</span>
+            </button>
+          </div>
           <button class="primary auth-submit" :disabled="authLoading || !canAuth">
             {{ authLoading ? '处理中...' : authMode === 'login' ? '登录' : '注册' }}
           </button>
@@ -285,6 +299,8 @@ const currentUser = ref(null)
 const authMode = ref('login')
 const authLoading = ref(false)
 const authError = ref('')
+// 密码框可见性开关 / password visibility toggle
+const showPassword = ref(false)
 const auth = ref({ name: '', email: '', password: '' })
 
 const canAuth = computed(() => {
@@ -814,6 +830,29 @@ function scrollToBottom() {
   border-radius: 8px;
   font-size: 14px;
 }
+/* 密码框 wrapper：相对定位容纳眼睛按钮 / password wrapper: relative to host the eye button */
+.password-field { position: relative; }
+/* 给眼睛按钮留出右侧空间 / reserve space on the right for the eye button */
+.password-field input { padding-right: 36px; }
+/* 眼睛切换按钮：绝对定位右侧、垂直居中 / eye toggle: absolute right, vertically centered */
+.password-toggle {
+  position: absolute;
+  right: 6px;
+  top: 50%;
+  transform: translateY(-50%);
+  width: 28px;
+  height: 28px;
+  padding: 0;
+  border: none;
+  background: transparent;
+  cursor: pointer;
+  font-size: 16px;
+  line-height: 1;
+  color: #666;
+  border-radius: 4px;
+}
+.password-toggle:hover:not(:disabled) { background: #f0f0f0; color: #333; }
+.password-toggle:disabled { cursor: not-allowed; opacity: 0.5; }
 .auth-submit { padding: 10px; font-size: 14px; margin-top: 4px; }
 .auth-switch { text-align: center; margin-top: 12px; }
 
