@@ -264,6 +264,7 @@ import {
   LocalStorageAdapter,
   createStorage,
   unwrap,
+  unwrapVoid,
   streamConversationMessage,
   streamRegenerate,
 } from '@myai/sdk'
@@ -388,7 +389,19 @@ onMounted(async () => {
       await loadConversations()
       setupChannel()
       const lastId = localStorage.getItem(ACTIVE_CONV_KEY)
-      if (lastId) await selectConversation(Number(lastId))
+      // 软删 / 永久删的对话（4031）不可访问；捕获后清 lastId + activeConversationId，
+      // 否则下次刷新又会触发 selectConversation 抛 4031。
+      // Soft/hard-deleted conversations return 4031; on failure clear lastId to prevent
+      // re-triggering on next refresh.
+      if (lastId) {
+        try {
+          await selectConversation(Number(lastId))
+        } catch {
+          localStorage.removeItem(ACTIVE_CONV_KEY)
+          activeConversationId.value = null
+          activeMessages.value = []
+        }
+      }
     } catch {
       token.value = null
       localStorage.removeItem(TOKEN_KEY)
