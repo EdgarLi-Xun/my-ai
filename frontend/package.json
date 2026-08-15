@@ -9,7 +9,7 @@
     "preview": "vite preview"
   },
   "dependencies": {
-    "@myai/sdk": "file:../../myAi-sdk",
+    "@myai/sdk": "file:../../my-ai-sdk",
     "vue": "^3.4.0",
     "markdown-it": "^14.1.0",
     "markdown-it-highlightjs": "^4.2.0",
