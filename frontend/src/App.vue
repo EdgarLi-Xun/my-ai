@@ -247,6 +247,19 @@
           {{ configError }}（点击关闭）
         </div>
       </aside>
+
+      <!-- 通用确认弹窗 / Confirm dialog (Promise-based) -->
+      <div v-if="confirmDialog.show" class="modal-backdrop">
+        <div class="modal-card" role="dialog" aria-modal="true" :aria-label="confirmDialog.title">
+          <div class="modal-icon" :class="`modal-icon-${confirmDialog.tone}`">{{ confirmDialog.icon }}</div>
+          <h3 class="modal-title">{{ confirmDialog.title }}</h3>
+          <p class="modal-message">{{ confirmDialog.message }}</p>
+          <div class="modal-actions">
+            <button class="secondary modal-btn" @click="closeConfirm(false)">{{ confirmDialog.cancelText }}</button>
+            <button :class="[confirmDialog.tone === 'danger' ? 'modal-btn-danger' : 'primary', 'modal-btn']" @click="closeConfirm(true)">{{ confirmDialog.confirmText }}</button>
+          </div>
+        </div>
+      </div>
     </div>
   </div>
 </template>
@@ -619,7 +632,14 @@ async function setDefaultKey(key) {
 
 async function deleteKey(key) {
   if (!currentUser.value) return
-  if (!window.confirm(`确定删除 Key "${key.name}" 吗？`)) return
+  const ok = await showConfirm({
+    title: '删除 Key',
+    message: `确定删除 Key "${key.name}" 吗？该操作不可恢复。`,
+    icon: '🔑',
+    confirmText: '删除',
+    tone: 'danger',
+  })
+  if (!ok) return
   configLoading.value = true
   configError.value = ''
   try {
@@ -691,7 +711,14 @@ async function loadMessages() {
 }
 
 async function deleteConversation(conv) {
-  if (!window.confirm(`确定删除对话 "${conv.title}" 吗？`)) return
+  const ok = await showConfirm({
+    title: '删除对话',
+    message: `确定删除对话 "${conv.title}" 吗？可在 30 天内从回收站恢复。`,
+    icon: '🗑️',
+    confirmText: '删除',
+    tone: 'danger',
+  })
+  if (!ok) return
   try {
     await api(`/api/conversations/${conv.id}`, { method: 'DELETE' })
     if (activeConversationId.value === conv.id) {
@@ -717,7 +744,14 @@ async function restoreConversation(conv) {
 }
 
 async function permanentlyDelete(conv) {
-  if (!window.confirm(`永久删除对话 "${conv.title}"？所有消息也会被删除。`)) return
+  const ok = await showConfirm({
+    title: '永久删除对话',
+    message: `永久删除对话 "${conv.title}"？所有消息也会被删除，且不可恢复。`,
+    icon: '⚠️',
+    confirmText: '永久删除',
+    tone: 'danger',
+  })
+  if (!ok) return
   try {
     await api(`/api/conversations/${conv.id}/permanent`, { method: 'DELETE' })
     await loadConversations()
@@ -1172,6 +1206,72 @@ function scrollToBottom() {
   font-size: 12px;
   cursor: pointer;
 }
+
+/* ===== 通用确认弹窗 / Confirm dialog ===== */
+.modal-backdrop {
+  position: fixed;
+  inset: 0;
+  background: rgba(0, 0, 0, 0.45);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 1000;
+  /* 用户偏好：backdrop 点击不响应（不能用 @click 关闭）/ per preference: backdrop click does not close */
+}
+.modal-card {
+  background: #fff;
+  border-radius: 14px;
+  padding: 28px 32px 24px;
+  width: 380px;
+  max-width: 90vw;
+  box-shadow: 0 16px 48px rgba(0, 0, 0, 0.25);
+  text-align: center;
+}
+.modal-icon {
+  font-size: 28px;
+  width: 56px;
+  height: 56px;
+  border-radius: 50%;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  margin-bottom: 12px;
+}
+.modal-icon-danger { background: #fee2e2; }
+.modal-icon-primary { background: #dbeafe; }
+.modal-title {
+  font-size: 16px;
+  font-weight: 600;
+  margin: 0 0 8px;
+  color: #1f2937;
+}
+.modal-message {
+  font-size: 14px;
+  color: #4b5563;
+  margin: 0 0 24px;
+  line-height: 1.5;
+  white-space: pre-line;
+}
+.modal-actions {
+  display: flex;
+  gap: 12px;
+  justify-content: center;
+}
+.modal-btn {
+  flex: 1;
+  padding: 10px 16px;
+  font-size: 14px;
+}
+.modal-btn-danger {
+  padding: 10px 16px;
+  border: none;
+  border-radius: 8px;
+  color: #fff;
+  background: #dc2626;
+  cursor: pointer;
+  font-size: 14px;
+}
+.modal-btn-danger:hover { background: #b91c1c; }
 
 @media (max-width: 880px) {
   .workspace { grid-template-columns: 1fr; }
