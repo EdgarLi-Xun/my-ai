@@ -304,6 +304,43 @@ const authError = ref('')
 const showPassword = ref(false)
 const auth = ref({ name: '', email: '', password: '' })
 
+// ============ 通用确认弹窗状态 / Confirm dialog state ============
+// Promise-based 通用确认：showConfirm({title, message, icon, confirmText, cancelText, tone}) → Promise<boolean>
+// tone: 'danger' (red) / 'primary' (blue)；按 ESC 关闭（用户偏好 backdrop 不响应点击）
+const confirmDialog = ref({
+  show: false, title: '', message: '', icon: '', confirmText: '确认', cancelText: '取消', tone: 'danger', resolve: null,
+})
+
+function showConfirm(opts) {
+  return new Promise(resolve => {
+    confirmDialog.value = {
+      show: true,
+      title: opts.title || '确认',
+      message: opts.message || '',
+      icon: opts.icon || '⚠️',
+      confirmText: opts.confirmText || '确认',
+      cancelText: opts.cancelText || '取消',
+      tone: opts.tone || 'danger',
+      resolve,
+    }
+  })
+}
+
+function closeConfirm(result) {
+  if (confirmDialog.value.resolve) {
+    confirmDialog.value.resolve(result)
+    confirmDialog.value.resolve = null
+  }
+  confirmDialog.value.show = false
+}
+
+// 全局 ESC 关闭模态（用户偏好：ESC 关闭 + backdrop 不响应点击）
+function handleGlobalKeydown(e) {
+  if (e.key === 'Escape' && confirmDialog.value.show) {
+    closeConfirm(false)
+  }
+}
+
 const canAuth = computed(() => {
   const e = (auth.value.email || '').trim()
   const p = (auth.value.password || '').trim()
@@ -379,6 +416,8 @@ async function api(url, options = {}) {
 
 // ============ 生命周期 ============
 onMounted(async () => {
+  // 全局 ESC 监听：关闭模态确认弹窗（用户偏好）/ global ESC: close confirm dialog
+  window.addEventListener('keydown', handleGlobalKeydown)
   await loadProviders()
   const saved = localStorage.getItem(TOKEN_KEY)
   if (saved) {
@@ -397,9 +436,14 @@ onMounted(async () => {
         try {
           await selectConversation(Number(lastId))
         } catch {
+          // 软删 / 永久删的对话（4031）不可访问；清 lastId + activeConversationId，
+          // 并清掉 loadMessages 设置的"加载消息失败"红色条（自动恢复失败属预期，不应打扰用户）。
+          // Soft/hard-deleted conversations return 4031; clear lastId to prevent re-trigger
+          // and clear the loadMessages error toast (auto-restore failure is expected, don't bother user).
           localStorage.removeItem(ACTIVE_CONV_KEY)
           activeConversationId.value = null
           activeMessages.value = []
+          error.value = ''
         }
       }
     } catch {
@@ -410,6 +454,7 @@ onMounted(async () => {
 })
 
 onBeforeUnmount(() => {
+  window.removeEventListener('keydown', handleGlobalKeydown)
   if (channel.value) channel.value.close()
   if (abortCtl.value) abortCtl.value.abort()
 })
