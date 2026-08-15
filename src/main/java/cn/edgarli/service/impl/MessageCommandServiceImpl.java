@@ -4,6 +4,7 @@ import cn.edgarli.common.BizException;
 import cn.edgarli.entity.Conversation;
 import cn.edgarli.entity.Message;
 import cn.edgarli.entity.UserApiKey;
+import cn.edgarli.infrastructure.audit.Auditable;
 import cn.edgarli.mapper.ConversationMapper;
 import cn.edgarli.mapper.MessageMapper;
 import cn.edgarli.service.ai.AiService;
@@ -124,6 +125,35 @@ public class MessageCommandServiceImpl implements MessageCommandService {
             fresh.setIsOrphaned(false);
         }
         return support.toResponse(fresh);
+    }
+
+    // ============ 删除 ============
+
+    /**
+     * Soft-delete a message and touch the parent conversation's {@code updated_at}.
+     * 软删消息并触摸所属对话的 {@code updated_at}。
+     * <p>
+     * Idempotent: deleting an already soft-deleted row is a no-op (XML UPDATE filtered by {@code deleted_at IS NULL}).
+     * 幂等：删已软删消息是 no-op（XML 的 UPDATE 通过 {@code deleted_at IS NULL} 过滤）。
+     * Transactional: owner check + soft delete + touch all share one transaction.
+     * 事务边界：owner 校验、软删、touch conversation 全部在同一事务内。
+     *
+     * @param userId user id / 用户 ID
+     * @param messageId message id / 消息 ID
+     */
+    @Override
+    @Transactional
+    @Auditable(action = "MESSAGE_DELETE", targetType = "Message")
+    public void delete(Long userId, Long messageId) {
+        Message msg = support.requireOwnedMessage(userId, messageId);
+        // owner 校验，跨用户访问会抛 4032 / owner check; cross-user access throws 4032
+        int affected = messageMapper.softDelete(messageId);
+        // 幂等：affected=0 表示已是软删状态，不抛错 / affected=0 means already soft-deleted; treat as success
+        if (affected == 0) {
+            log.debug("Message {} already soft-deleted; delete is a no-op", messageId);
+        }
+        conversationMapper.touchUpdatedAt(msg.getConversationId());
+        // 触摸 conversation.updated_at 让侧栏顺序反映最新变动 / touch updated_at so sidebar ordering reflects the change
     }
 
     // ============ 流式回复 ============

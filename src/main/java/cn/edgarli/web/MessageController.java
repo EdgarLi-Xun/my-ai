@@ -6,6 +6,7 @@ import cn.edgarli.service.MessageQueryService;
 import cn.edgarli.web.dto.UpdateMessageDto;
 import cn.edgarli.web.vo.MessageVo;
 import org.springframework.http.MediaType;
+import org.springframework.web.bind.annotation.DeleteMapping;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PatchMapping;
 import org.springframework.web.bind.annotation.PathVariable;
@@ -102,6 +103,33 @@ public class MessageController {
             @RequestBody UpdateMessageDto request) {
         Long userId = UserController.currentUserId();
         return Result.success(messageCommandService.edit(userId, id, request.content()));
+    }
+
+    /**
+     * 取单条消息（通过所属对话校验 owner）。
+     * Fetch a single message (owner validated via owning conversation).
+     *
+     * @param id 消息 ID / message id
+     * @return 消息 / message
+     */
+    @GetMapping("/api/messages/{id}")
+    public Result<MessageVo> get(@PathVariable Long id) {
+        Long userId = UserController.currentUserId();
+        return Result.success(messageQueryService.getById(userId, id));
+    }
+
+    /**
+     * 软删单条消息（{@code deleted_at = NOW()}，幂等）。
+     * Soft-delete a single message ({@code deleted_at = NOW()}, idempotent).
+     *
+     * @param id 消息 ID / message id
+     * @return 空结果 / empty result
+     */
+    @DeleteMapping("/api/messages/{id}")
+    public Result<Void> delete(@PathVariable Long id) {
+        Long userId = UserController.currentUserId();
+        messageCommandService.delete(userId, id);
+        return Result.success(null);
     }
 
     /**

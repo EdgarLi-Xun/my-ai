@@ -92,4 +92,13 @@ public interface MessageMapper extends BaseMapper<Message> {
      * @return true 表示存在 / true if exists
      */
     boolean existsNonOrphanedUserMessage(@Param("conversationId") Long conversationId);
+
+    /**
+     * 软删单条消息（{@code deleted_at = CURRENT_TIMESTAMP}，仅更新未删除的行）。
+     * Soft-delete a single message ({@code deleted_at = CURRENT_TIMESTAMP}, only updates active rows).
+     *
+     * @param messageId 消息主键 / message primary key
+     * @return 受影响行数（0 = 已是软删状态 / 1 = 刚标 deleted_at）/ affected rows (0 = already deleted, 1 = just marked)
+     */
+    int softDelete(@Param("messageId") Long messageId);
 }

@@ -1,6 +1,7 @@
 package cn.edgarli.service.impl;
 
 import cn.edgarli.service.MessageQueryService;
+import cn.edgarli.entity.Message;
 import cn.edgarli.mapper.MessageMapper;
 import cn.edgarli.web.vo.MessageVo;
 import org.springframework.stereotype.Service;
@@ -40,5 +41,20 @@ public class MessageQueryServiceImpl implements MessageQueryService {
         return messageMapper.findByConversationId(conversationId, includeOrphaned).stream()
                 .map(support::toResponse)
                 .toList();
+    }
+
+    /**
+     * Get a single message by id. Read-only, no transaction. Owner validated via the message's conversation.
+     * 按 id 取单条消息。只读，无需事务。通过消息所属对话校验 owner。
+     *
+     * @param userId user id / 用户 ID
+     * @param messageId message id / 消息 ID
+     * @return message / 消息
+     */
+    @Override
+    public MessageVo getById(Long userId, Long messageId) {
+        Message msg = support.requireOwnedMessage(userId, messageId);
+        // owner 校验，跨用户访问会抛 4032 / owner check; cross-user access throws 4032
+        return support.toResponse(msg);
     }
 }

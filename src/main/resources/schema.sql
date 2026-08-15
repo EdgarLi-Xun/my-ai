@@ -63,6 +63,10 @@ CREATE INDEX IF NOT EXISTS idx_message_conversation_id ON message(conversation_i
 ALTER TABLE message ADD CONSTRAINT IF NOT EXISTS message_role_check
     CHECK (role IN ('USER', 'ASSISTANT', 'SYSTEM'));
 
+-- 软删时间（NULL = 未软删；与 is_orphaned 区分：orphan 是被覆盖作废，deleted_at 是用户主动删除）
+-- soft-delete timestamp (NULL = not deleted; distinct from is_orphaned which marks superseded rows).
+ALTER TABLE message ADD COLUMN IF NOT EXISTS deleted_at TIMESTAMP;
+
 -- ADR 0004：可观测性
 -- user.role：RBAC 角色（USER / ADMIN），env var MYAI_ADMIN_EMAILS 命中设 ADMIN。
 ALTER TABLE user ADD COLUMN IF NOT EXISTS role VARCHAR(20) NOT NULL DEFAULT 'USER';

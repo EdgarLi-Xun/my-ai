@@ -75,4 +75,14 @@ public interface MessageCommandService {
      * @return newly inserted message / 新插入的消息
      */
     Message insertAssistantMessage(Long conversationId, String content);
+
+    /**
+     * Soft-delete a message: set {@code deleted_at = NOW()}. Idempotent (re-deleting a soft-deleted row is a no-op).
+     * 软删消息：{@code deleted_at = NOW()}。幂等（重复删已软删消息 = no-op）。
+     *
+     * @param userId user id / 用户 ID
+     * @param messageId message id / 消息 ID
+     * @throws BizException 4032 message not found or not owned / 4032 消息不存在或不属于当前用户
+     */
+    void delete(Long userId, Long messageId);
 }

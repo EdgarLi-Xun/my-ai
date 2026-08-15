@@ -71,4 +71,12 @@
           AND is_orphaned = FALSE
     </select>
 
+    <!-- 软删单条消息：仅标 deleted_at，未删除的才生效（幂等）；区别于 is_orphaned 的"被覆盖作废"语义 / soft-delete: mark deleted_at only on active rows (idempotent) -->
+    <update id="softDelete">
+        UPDATE message
+        SET deleted_at = CURRENT_TIMESTAMP
+        WHERE id = #{messageId}
+          AND deleted_at IS NULL
+    </update>
+
 </mapper>

@@ -52,4 +52,8 @@ public class Message {
     /** 创建时间 / creation timestamp */
     @Column("created_at")
     private LocalDateTime createdAt;
+
+    /** 软删时间（NULL = 未软删；区别于 is_orphaned：orphan = 被覆盖作废，deleted_at = 用户主动删除）/ soft-delete timestamp (NULL = not deleted; distinct from is_orphaned which marks superseded rows) */
+    @Column("deleted_at")
+    private LocalDateTime deletedAt;
 }

@@ -25,4 +25,15 @@ public interface MessageQueryService {
      * @return message list (ordered by {@code created_at} asc) / 消息列表（按 {@code created_at} 升序）
      */
     List<MessageVo> list(Long userId, Long conversationId, boolean includeOrphaned);
+
+    /**
+     * Get a single message by id, enforcing ownership through the message's conversation.
+     * 按 id 取单条消息，并通过所属对话校验 owner。
+     *
+     * @param userId user id / 用户 ID
+     * @param messageId message id / 消息 ID
+     * @return message / 消息
+     * @throws BizException 4032 message not found or not owned / 4032 消息不存在或不属于当前用户
+     */
+    MessageVo getById(Long userId, Long messageId);
 }
