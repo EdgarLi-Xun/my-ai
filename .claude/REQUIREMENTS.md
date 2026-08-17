@@ -126,6 +126,26 @@
 - 验证范围：H5 dev/build 通过；iOS / Android / HarmonyOS NEXT 编译需 HBuilderX GUI（未跑）。App 模拟器 / 真机端到端按 CLAUDE.md §7 约定不声称"全部通过"。
 - 来源：2026-07-29 `/grill-with-docs` 13 题决策 + 2026-08-14 第 17/18 次对话实施。
 
+### 1.11 Docker 部署（已设计，未实现 — 2026-08-17）
+
+- 设计定稿见 ADR `docs/adr/0007-docker-deployment.md`：把 MyAi 从"仅 `mvn spring-boot:run` 本地跑"扩展到"容器化部署到 VPS（公网，给移动 App 后端）+ NAS（家庭 LAN）"，源码托管在 Gitee，**镜像不上公网 registry**——CI（Gitee Go）推 Gitee 镜像仓，两台目标机只跑 `docker compose pull && up -d`。Ollama 跑在第三台独立 LAN 服务器，MyAi 容器通过 HTTP API 调内网。
+- 关键约束（21 题 grilling 决策摘要）：
+  - 镜像：`linux/amd64,linux/arm64` 双架构；base = `eclipse-temurin:21-jre-alpine`；只拷贝 pre-built fat JAR（**不在镜像里跑前端 / mvn**）。
+  - 数据：`./data` `./logs` bind mount；容器内 H2 关 `AUTO_SERVER=TRUE`。
+  - 配置：所有可变走环境变量 / `.env`；`jwt.secret` 改 `${MYAI_JWT_SECRET}` **无默认值**；`providers.ollama.default-base-url` 改 `${MYAI_OLLAMA_BASE_URL:http://localhost:11434}`。
+  - 容器内：H2 console 关；TZ=`Asia/Shanghai` + `apk add tzdata`；JVM `MaxRAMPercentage=75.0`；ENTRYPOINT 用 sh -c 展开 `$JAVA_OPTS` + STOPSIGNAL=SIGTERM + `stop_grace_period: 1m`；HEALTHCHECK = `wget -qO- http://localhost:8031/`。
+  - 日志：`logback-spring.xml` 加 ConsoleAppender + 保留 RollingFileAppender。
+  - **单实例硬约束**（H2 文件锁 + 本地文件日志根本不能多实例）。
+- 实施期未做的产物（下一轮启动）：
+  - `Dockerfile`、`docker-compose.yml`、`.env.example`、`.dockerignore`
+  - `.gitee/go.yml`（CI：先 `mvn -DskipTests package` → buildx 多架构推送 Gitee 镜像仓）
+  - `README.md` 增"Docker 部署"段
+  - `application.yml` 3 处改动（关 AUTO_SERVER / JWT 无默认值 / Ollama base URL 改 env 注入）+ `application-my.yml` 同步
+  - `logback-spring.xml` 新增 ConsoleAppender
+  - `<TODO:your-gitee-namespace>` 命名空间填到 ADR 0007 + 实施期实测 Gitee Go 构建分钟数是否够
+- 降级路径：若 Gitee Go 免费用户无法推镜像仓或多架构 buildx → 自建 `registry:2` 容器跑在 VPS（NAS 配 `insecure-registries` / 前置 Caddy）。
+- 来源：2026-08-17 `/grill-with-docs` 21 题决策（Q1-Q21）。
+
 ## 2. 非功能需求 / 约束
 
 ### 2.1 数据持久化

@@ -132,6 +132,15 @@ Maven 不会自动触发 `npm run build`；改前端源码后必须手动构建�
 23. **SDK 共享调用契约（ADR 0006）**：web / App 共享 `@myai/sdk`（path-only）作为唯一 API 客户端；不再各自写 `fetch` 包装。web 端仅维护 `App.vue` 一处 SDK 实例 + 一处 SSE 流式接入（已删除 `lib/sse.js`，保留 `lib/markdown.js` 作 UI 渲染层职责）。新增端点必须先在 SDK 内补齐接口，再在两端消费；不要在 web / App 任一端单独写后端协议调用。
 24. **后端 URL 可配置（ADR 0006 Q13）**：web 端固定同源 `/api`（Vite proxy 或 Spring Boot 同源），**不可**让 web 用户改 baseUrl；App 端用户在 `config-backend` 页填写 URL → 走 SDK `validateBackendUrl` ping `/api/providers` 校验（5s 超时） → 落 `myai.backendUrl` → `rebuildSdk(backendUrl)` 重建实例。不要把 App 的 URL 配置能力下放到 web；不要在 web 端暴露任何让用户输入后端地址的入口。
 25. **SSRF 边界（ADR 0006 §6）**：用户自填的 `backendUrl` 经 SDK `validateBackendUrl` 校验，仅允许 `http` / `https` 协议且要求 `GET /api/providers` 返回 200；超时 5s 即拒绝。但**未做内网 IP 白名单/黑名单**——内网/loopback/链路本地地址的拦截不在本期范围，部署到不可信用户场景前必须补齐（建议：用 Spring 的 `RequestPredicate` 或独立过滤器在 outbound HTTP 处拦截 RFC1918 / 127.0.0.0/8 / 169.254.0.0/16 / ::1 等地址段）。
+26. **Docker 部署约束（ADR 0007）**：
+    - **目标**：VPS（公网，App + web）+ NAS（LAN），源码在 Gitee，**镜像不上公网 registry**——CI 推 Gitee 镜像仓（Gitee Go），两台目标机只跑 `docker compose pull && up -d`。
+    - **架构**：`linux/amd64,linux/arm64` 双架构（NAS 通常 ARM64）；镜像层 base = `eclipse-temurin:21-jre-alpine`；只拷贝 pre-built fat JAR，**不在镜像里跑前端 / mvn**。
+    - **数据持久化**：`./data` `./logs` 必须 **bind mount**（不用命名卷，便于 rsync 迁移）；容器内 H2 关 `AUTO_SERVER=TRUE`（单进程不需 TCP 共享）。
+    - **配置注入**：所有可变配置走环境变量 / `.env`；`application.yml` 的 `jwt.secret` 改成 `${MYAI_JWT_SECRET}` **无默认值**，缺失即 fail-fast；`providers.ollama.default-base-url` 改成 `${MYAI_OLLAMA_BASE_URL:http://localhost:11434}` 让 `.env` 覆盖。
+    - **容器内**：H2 console **关**（`SPRING_H2_CONSOLE_ENABLED=false`）；TZ=`Asia/Shanghai` + `apk add tzdata`（LogCleanupTask 时区一致）；JVM 用 `-XX:MaxRAMPercentage=75.0 -XX:InitialRAMPercentage=50.0` 让 cgroup 自动算内存；ENTRYPOINT = `["sh", "-c", "exec java $JAVA_OPTS -jar /app/app.jar"]` + STOPSIGNAL=SIGTERM + `stop_grace_period: 1m`；HEALTHCHECK = `wget -qO- http://localhost:8031/`（不引 actuator）。
+    - **日志**：`logback-spring.xml` 新增 ConsoleAppender（`docker logs` 能看）+ **保留** RollingFileAppender 写 `./logs/*.jsonl`（挂卷出来给备份 / 聚合）。
+    - **硬约束**：**单实例**——H2 文件锁 + 本地文件日志**根本无法多实例**；Ollama 跑在第三台独立 LAN 服务器，MyAi 容器通过 `OLLAMA_BASE_URL`（`.env` 注入内网 IP）调 HTTP API，不在 MyAi 容器里跑 Ollama。
+    - **降级路径**：若 Gitee Go 免费用户无法推镜像仓或多架构 buildx → 切自建 `registry:2` 容器跑在 VPS（NAS 配 `insecure-registries` / 前置 Caddy）。
 
 ### 数据模型（与 schema.sql 对齐）
 
